@@ -19,6 +19,7 @@ set(RITHMIC_API_ROOT "" CACHE PATH "Path to the Rithmic R | API+ SDK root")
 find_package(Qt6 REQUIRED COMPONENTS Core Widgets Charts Network WebSockets)
 set(protobuf_MODULE_COMPATIBLE TRUE)
 find_package(Protobuf CONFIG REQUIRED)
+find_program(BASH_EXECUTABLE bash)
 
 set(RITHMIC_PROTOCOL_PROTO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/rithmic-protocol/proto")
 set(RITHMIC_PROTOCOL_PROTO_FILES
@@ -43,30 +44,15 @@ set(RITHMIC_PROTOCOL_PROTO_FILES
 )
 protobuf_generate_cpp(RITHMIC_PROTOCOL_SRCS RITHMIC_PROTOCOL_HDRS ${RITHMIC_PROTOCOL_PROTO_FILES})
 
-set(TICK_VECTOR_SOURCES
-    src/main.cpp
-    src/adapters/RithmicProtocolClient.cpp
-    src/adapters/RithmicMarketDataAdapter.cpp
-    src/adapters/SimulatedMarketDataAdapter.cpp
-    src/adapters/TradingAdapterFactory.cpp
+set(TICK_VECTOR_CORE_SOURCES
     src/core/AccountStore.cpp
     src/core/ConnectionConfig.cpp
     src/core/FeedConnectionStore.cpp
     src/core/MacKeychain.cpp
-    src/ui/ConnectionTestDialog.cpp
-    src/ui/ChartWindow.cpp
-    src/ui/DomWindow.cpp
-    src/ui/FeedSettingsDialog.cpp
-    src/ui/MainWindow.cpp
-    src/ui/SelectInstrumentDialog.cpp
 )
 
-set(TICK_VECTOR_HEADERS
+set(TICK_VECTOR_CORE_HEADERS
     src/app/AppConstants.hpp
-    src/adapters/RithmicProtocolClient.hpp
-    src/adapters/RithmicMarketDataAdapter.hpp
-    src/adapters/SimulatedMarketDataAdapter.hpp
-    src/adapters/TradingAdapterFactory.hpp
     src/core/AccountStore.hpp
     src/core/ConnectionConfig.hpp
     src/core/FeedConnection.hpp
@@ -74,46 +60,129 @@ set(TICK_VECTOR_HEADERS
     src/core/MacKeychain.hpp
     src/core/MarketDataAdapter.hpp
     src/core/Types.hpp
-    src/ui/ConnectionTestDialog.hpp
+)
+
+set(TICK_VECTOR_ADAPTER_SOURCES
+    src/adapters/RithmicProtocolClient.cpp
+    src/adapters/RithmicMarketDataAdapter.cpp
+    src/adapters/SimulatedMarketDataAdapter.cpp
+    src/adapters/TradingAdapterFactory.cpp
+)
+
+set(TICK_VECTOR_ADAPTER_HEADERS
+    src/adapters/RithmicProtocolClient.hpp
+    src/adapters/RithmicMarketDataAdapter.hpp
+    src/adapters/SimulatedMarketDataAdapter.hpp
+    src/adapters/TradingAdapterFactory.hpp
+)
+
+set(TICK_VECTOR_UI_SOURCES
+    src/ui/ChartWindow.cpp
+    src/ui/ConnectionTestDialog.cpp
+    src/ui/DomWindow.cpp
+    src/ui/FeedSettingsDialog.cpp
+    src/ui/MainWindow.cpp
+    src/ui/SelectInstrumentDialog.cpp
+)
+
+set(TICK_VECTOR_UI_HEADERS
     src/ui/ChartWindow.hpp
+    src/ui/ConnectionTestDialog.hpp
     src/ui/DomWindow.hpp
     src/ui/FeedSettingsDialog.hpp
     src/ui/MainWindow.hpp
     src/ui/SelectInstrumentDialog.hpp
 )
 
-add_executable(${PROJECT_NAME}
-    ${TICK_VECTOR_SOURCES}
-    ${TICK_VECTOR_HEADERS}
+add_library(tick-vector-core STATIC
+    ${TICK_VECTOR_CORE_SOURCES}
+    ${TICK_VECTOR_CORE_HEADERS}
+)
+
+target_include_directories(tick-vector-core PUBLIC src)
+target_link_libraries(tick-vector-core PUBLIC Qt6::Core)
+target_compile_features(tick-vector-core PUBLIC cxx_std_20)
+
+add_library(tick-vector-adapters STATIC
+    ${TICK_VECTOR_ADAPTER_SOURCES}
+    ${TICK_VECTOR_ADAPTER_HEADERS}
     ${RITHMIC_PROTOCOL_SRCS}
     ${RITHMIC_PROTOCOL_HDRS}
+)
+
+target_include_directories(tick-vector-adapters PUBLIC src PRIVATE "${CMAKE_CURRENT_BINARY_DIR}")
+target_link_libraries(tick-vector-adapters
+    PUBLIC
+        tick-vector-core
+        Qt6::Core
+    PRIVATE
+        Qt6::Network
+        Qt6::WebSockets
+        protobuf::libprotobuf
+)
+target_compile_features(tick-vector-adapters PUBLIC cxx_std_20)
+
+add_library(tick-vector-ui STATIC
+    ${TICK_VECTOR_UI_SOURCES}
+    ${TICK_VECTOR_UI_HEADERS}
+)
+
+target_include_directories(tick-vector-ui PUBLIC src)
+target_link_libraries(tick-vector-ui
+    PUBLIC
+        tick-vector-core
+        Qt6::Widgets
+        Qt6::Charts
+    PRIVATE
+        tick-vector-adapters
+)
+target_compile_features(tick-vector-ui PUBLIC cxx_std_20)
+
+add_executable(${PROJECT_NAME}
+    src/main.cpp
     src/resources.qrc
 )
 
-source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/src" PREFIX "Source" FILES ${TICK_VECTOR_SOURCES} ${TICK_VECTOR_HEADERS} src/resources.qrc)
+target_link_libraries(${PROJECT_NAME} PRIVATE tick-vector-ui tick-vector-adapters Qt6::Widgets)
+target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_20)
+
+source_group(TREE "${CMAKE_CURRENT_SOURCE_DIR}/src" PREFIX "Source" FILES
+    src/main.cpp
+    src/resources.qrc
+    ${TICK_VECTOR_CORE_SOURCES}
+    ${TICK_VECTOR_CORE_HEADERS}
+    ${TICK_VECTOR_ADAPTER_SOURCES}
+    ${TICK_VECTOR_ADAPTER_HEADERS}
+    ${TICK_VECTOR_UI_SOURCES}
+    ${TICK_VECTOR_UI_HEADERS}
+)
 source_group("Generated/Rithmic Protocol" FILES ${RITHMIC_PROTOCOL_SRCS} ${RITHMIC_PROTOCOL_HDRS})
 
-target_link_libraries(${PROJECT_NAME} PRIVATE Qt6::Core Qt6::Widgets Qt6::Charts Qt6::Network Qt6::WebSockets protobuf::libprotobuf)
-target_include_directories(${PROJECT_NAME} PRIVATE src "${CMAKE_CURRENT_BINARY_DIR}")
-target_compile_features(${PROJECT_NAME} PRIVATE cxx_std_20)
+if(BASH_EXECUTABLE)
+    add_custom_target(architecture-check
+        COMMAND "${BASH_EXECUTABLE}" "${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-architecture.sh"
+        WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}"
+        COMMENT "Checking source dependency boundaries"
+    )
+endif()
 
 if(TC_ENABLE_RITHMIC_API_PLUS)
     if(NOT RITHMIC_API_ROOT)
         message(FATAL_ERROR "Set -DRITHMIC_API_ROOT=/path/to/rithmic/sdk when TC_ENABLE_RITHMIC_API_PLUS=ON")
     endif()
-    target_compile_definitions(${PROJECT_NAME} PRIVATE TC_ENABLE_RITHMIC_API_PLUS=1)
-    target_include_directories(${PROJECT_NAME} PRIVATE "${RITHMIC_API_ROOT}/include")
-    target_link_directories(${PROJECT_NAME} PRIVATE "${RITHMIC_API_ROOT}/lib")
+    target_compile_definitions(tick-vector-adapters PRIVATE TC_ENABLE_RITHMIC_API_PLUS=1)
+    target_include_directories(tick-vector-adapters PRIVATE "${RITHMIC_API_ROOT}/include")
+    target_link_directories(tick-vector-adapters PRIVATE "${RITHMIC_API_ROOT}/lib")
 endif()
 
 if(APPLE)
     find_library(COREFOUNDATION_FRAMEWORK CoreFoundation REQUIRED)
     find_library(SECURITY_FRAMEWORK Security REQUIRED)
-    target_link_libraries(${PROJECT_NAME} PRIVATE ${SECURITY_FRAMEWORK} ${COREFOUNDATION_FRAMEWORK})
+    target_link_libraries(tick-vector-core PRIVATE ${SECURITY_FRAMEWORK} ${COREFOUNDATION_FRAMEWORK})
     if(TC_ENABLE_KEYCHAIN_BACKUP)
-        target_compile_definitions(${PROJECT_NAME} PRIVATE TC_ENABLE_KEYCHAIN_BACKUP=1)
+        target_compile_definitions(tick-vector-core PRIVATE TC_ENABLE_KEYCHAIN_BACKUP=1)
     endif()
     if(TC_KEYCHAIN_ALLOW_ANY_APP)
-        target_compile_definitions(${PROJECT_NAME} PRIVATE TC_KEYCHAIN_ALLOW_ANY_APP=1)
+        target_compile_definitions(tick-vector-core PRIVATE TC_KEYCHAIN_ALLOW_ANY_APP=1)
     endif()
 endif()

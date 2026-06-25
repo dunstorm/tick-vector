@@ -2,13 +2,18 @@ BUILD_DIR ?= build
 GENERATOR ?= Ninja
 BIN_PATH := $(BUILD_DIR)/tick-vector
 
-.PHONY: configure build run screenshot screenshot-feed-settings screenshot-connection-test screenshot-instrument screenshot-chart screenshot-dom reset-credentials reset-keychain clean
+.PHONY: configure build check architecture run screenshot screenshot-feed-settings screenshot-connection-test screenshot-instrument screenshot-chart screenshot-dom reset-credentials reset-keychain clean
 
 configure:
 	cmake -S . -B $(BUILD_DIR) -G "$(GENERATOR)"
 
 build: configure
 	cmake --build $(BUILD_DIR)
+
+check: architecture build
+
+architecture:
+	@bash scripts/check-architecture.sh
 
 run: build
 	@"$(BIN_PATH)"

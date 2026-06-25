@@ -11,20 +11,23 @@
 ## Common Commands
 
 ```bash
+make architecture
 make build
+make check
 make run
 make screenshot
 make screenshot-chart
 make screenshot-dom
 ```
 
-`make build` configures and builds `build/tick-vector`. Screenshot targets run the app with `QT_QPA_PLATFORM=offscreen` and write PNGs to `/tmp`.
+`make architecture` checks source dependency boundaries. `make build` configures and builds `build/tick-vector`. `make check` runs architecture checks and then builds. Screenshot targets run the app with `QT_QPA_PLATFORM=offscreen` and write PNGs to `/tmp`.
 
 The equivalent CMake preset flow is:
 
 ```bash
 cmake --preset dev
 cmake --build --preset dev
+cmake --build build --target architecture-check
 ```
 
 ## Rithmic Development

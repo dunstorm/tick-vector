@@ -19,6 +19,35 @@ Tick Vector is a native Qt desktop workstation with a small application shell, m
 
 `RithmicProtocolClient` handles the wire protocol, websocket lifecycle, login/system validation, heartbeats, subscriptions, and protobuf parsing. `RithmicMarketDataAdapter` translates protocol callbacks into Tick Vector snapshots, candles, and DOM levels.
 
+## Build Boundaries
+
+CMake mirrors the source architecture with internal targets:
+
+- `tick-vector-core`: `src/app` constants plus `src/core` domain, persistence, and adapter contracts.
+- `tick-vector-adapters`: concrete feed adapters and generated Rithmic protocol bindings.
+- `tick-vector-ui`: Qt windows and dialogs.
+- `tick-vector`: the executable composition root.
+
+The UI target links the adapter target privately because `MainWindow` and `ConnectionTestDialog` currently use `TradingAdapterFactory` as the creation boundary. UI code should not include concrete adapter or protocol headers.
+
+## Architecture Checks
+
+Run:
+
+```bash
+make architecture
+```
+
+The check fails when:
+
+- `src/app` includes core, adapter, or UI headers.
+- `src/core` includes adapter or UI headers.
+- `src/adapters` includes UI headers.
+- UI includes concrete Rithmic/simulated adapter headers.
+- generated protobuf or protobuf library headers leak outside adapters.
+
+The same check runs in GitHub Actions for pushes to `main` and pull requests.
+
 ## Persistence
 
 Development feed profiles are currently stored as plaintext JSON under the application data directory. Optional macOS Keychain backup support can be enabled with `-DTC_ENABLE_KEYCHAIN_BACKUP=ON`.

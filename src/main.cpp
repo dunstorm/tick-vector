@@ -1,6 +1,9 @@
+#include "adapters/TradingAdapterFactory.hpp"
+#include "app/AppConstants.hpp"
 #include "ui/MainWindow.hpp"
 #include "ui/ChartWindow.hpp"
 #include "ui/ConnectionTestDialog.hpp"
+#include "ui/DomWindow.hpp"
 #include "ui/FeedSettingsDialog.hpp"
 #include "ui/SelectInstrumentDialog.hpp"
 
@@ -11,8 +14,8 @@
 int main(int argc, char** argv)
 {
     QApplication app(argc, argv);
-    QApplication::setApplicationName("Trading Client");
-    QApplication::setOrganizationName("Trading Client");
+    QApplication::setApplicationName(tc::app::kDisplayName);
+    QApplication::setOrganizationName(tc::app::kOrganizationName);
     QApplication::setFont(QFont("Helvetica Neue", 13));
 
     const QStringList args = QApplication::arguments();
@@ -21,11 +24,29 @@ int main(int argc, char** argv)
         tc::MainWindow styleHost(nullptr, false);
         tc::FeedConnection connection;
         connection.name = "Rithmic";
-        tc::ChartWindow chart(connection);
+        connection.feedSource = "Simulator";
+        auto adapter = tc::createTradingAdapter(connection);
+        adapter->connectAdapter(connection.toConnectionConfig());
+        tc::ChartWindow chart(connection, adapter.get());
         chart.show();
         app.processEvents();
         const QPixmap capture = chart.grab();
         return capture.save(args.at(chartScreenshotIndex + 1)) ? 0 : 1;
+    }
+
+    const int domScreenshotIndex = args.indexOf("--screenshot-dom");
+    if (domScreenshotIndex >= 0 && domScreenshotIndex + 1 < args.size()) {
+        tc::MainWindow styleHost(nullptr, false);
+        tc::FeedConnection connection;
+        connection.name = "Rithmic";
+        connection.feedSource = "Simulator";
+        auto adapter = tc::createTradingAdapter(connection);
+        adapter->connectAdapter(connection.toConnectionConfig());
+        tc::DomWindow dom(connection, adapter.get(), "GC", "COMEX");
+        dom.show();
+        app.processEvents();
+        const QPixmap capture = dom.grab();
+        return capture.save(args.at(domScreenshotIndex + 1)) ? 0 : 1;
     }
 
     const int feedSettingsScreenshotIndex = args.indexOf("--screenshot-feed-settings");
@@ -45,12 +66,11 @@ int main(int argc, char** argv)
         tc::FeedConnection connection;
         connection.name = "Rithmic";
         connection.feedSource = "Rithmic";
-        connection.username = "LT-4VLX9C08";
-        connection.password = "password";
-        connection.gateway = "Chicago";
-        connection.system = "Lucid Trading";
+        connection.username = "demo-user";
+        connection.password = "demo-password";
+        connection.gateway = "rituz00100.rithmic.com:443";
+        connection.system = "Rithmic Test";
         tc::ConnectionTestDialog dialog(connection);
-        dialog.showSuccess();
         dialog.show();
         app.processEvents();
         const QPixmap capture = dialog.grab();

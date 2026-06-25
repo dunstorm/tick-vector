@@ -1,5 +1,6 @@
 #pragma once
 
+#include "app/AppConstants.hpp"
 #include "core/ConnectionConfig.hpp"
 
 #include <QtCore/QString>
@@ -19,7 +20,7 @@ struct FeedConnection {
     QString account;
     QString username;
     QString password;
-    QString appName{"TradingClient"};
+    QString appName{app::kRithmicAppName};
     bool useDemoCredentials{false};
     bool connectOnStartup{false};
 
@@ -40,7 +41,7 @@ struct FeedConnection {
         config.system = system;
         config.gateway = gateway.isEmpty() ? server : gateway;
         config.account = account;
-        config.appName = appName.trimmed().isEmpty() ? "TradingClient" : appName.trimmed();
+        config.appName = appName.trimmed().isEmpty() ? app::kRithmicAppName : appName.trimmed();
         config.useRealRithmic = feedSource.compare("Rithmic", Qt::CaseInsensitive) == 0;
         return config;
     }

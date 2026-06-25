@@ -1,5 +1,7 @@
 #pragma once
 
+#include "app/AppConstants.hpp"
+
 #include <QtCore/QString>
 #include <QtCore/QStringList>
 
@@ -10,7 +12,8 @@ struct ConnectionConfig {
     QString password;
     QString system;
     QString gateway;
-    QString appName{"TradingClient"};
+    QString appName{app::kRithmicAppName};
+    QString appVersion{"1.0"};
     QString account;
     bool useRealRithmic{false};
 

@@ -1,5 +1,7 @@
 #include "core/MacKeychain.hpp"
 
+#include "app/AppConstants.hpp"
+
 #include <QtCore/QtGlobal>
 
 #ifdef Q_OS_MACOS
@@ -112,7 +114,7 @@ bool allowAnyAppForAuthorization(SecAccessRef access, CFTypeRef authorization, C
 
 SecAccessRef makeCredentialAccess(const char* serviceName, const char* accountName, QString* errorMessage)
 {
-    const QByteArray descriptorText = QByteArray("Trading Client ") + serviceName + ":" + accountName;
+    const QByteArray descriptorText = QByteArray(app::kDisplayName) + " " + serviceName + ":" + accountName;
     CFStringRef descriptor = CFStringCreateWithCString(kCFAllocatorDefault, descriptorText.constData(), kCFStringEncodingUTF8);
     SecAccessRef access = nullptr;
 

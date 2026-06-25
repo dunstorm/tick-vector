@@ -1,5 +1,6 @@
 #include "ui/FeedSettingsDialog.hpp"
 
+#include "app/AppConstants.hpp"
 #include "ui/ConnectionTestDialog.hpp"
 
 #include <QtCore/QUuid>
@@ -31,10 +32,10 @@ FeedConnection makeBlankConnection()
     connection.workspaceName = "Lucid Trading";
     connection.workspaceLocation = "Local";
     connection.feedSource = "Rithmic";
-    connection.gateway = "Chicago";
-    connection.system = "Lucid Trading";
+    connection.gateway = "rituz00100.rithmic.com:443";
+    connection.system = "Rithmic Test";
     connection.marketData = "Non Aggregated";
-    connection.appName = "TradingClient";
+    connection.appName = app::kRithmicAppName;
     return connection;
 }
 
@@ -142,7 +143,7 @@ FeedSettingsDialog::FeedSettingsDialog(QVector<FeedConnection> connections, QWid
     titleLayout->addWidget(close);
     titleLayout->addWidget(minimize);
 
-    auto* logo = new QLabel("R", titleBar_);
+    auto* logo = new QLabel("T", titleBar_);
     logo->setObjectName("dialogLogo");
     logo->setFixedSize(22, 22);
     title_ = new QLabel("Edit Workspace", titleBar_);
@@ -203,7 +204,7 @@ FeedSettingsDialog::FeedSettingsDialog(QVector<FeedConnection> connections, QWid
     feedSource_->addItem("Rithmic");
     gatewaySelector_ = makeComboBox(formColumn);
     gatewaySelector_->setEditable(true);
-    gatewaySelector_->addItems({"Chicago", "Aurora", "Europe", "Asia", "Rithmic Test"});
+    gatewaySelector_->addItems({"rituz00100.rithmic.com:443", "Rithmic Test", "Chicago", "Aurora", "Europe", "Asia"});
     systemSelector_ = makeComboBox(formColumn);
     systemSelector_->setEditable(true);
     systemSelector_->addItems({"Lucid Trading", "Rithmic Paper Trading", "Rithmic Test", "Apex", "Topstep"});
@@ -234,7 +235,7 @@ FeedSettingsDialog::FeedSettingsDialog(QVector<FeedConnection> connections, QWid
     formLayout->addWidget(username_, row++, 1);
     formLayout->addWidget(makeLabel("Password", formColumn), row, 0);
     formLayout->addWidget(password_, row++, 1);
-    formLayout->addWidget(makeLabel("Gateway", formColumn), row, 0);
+    formLayout->addWidget(makeLabel("Gateway URL", formColumn), row, 0);
     formLayout->addWidget(gatewaySelector_, row++, 1);
     formLayout->addWidget(makeLabel("System", formColumn), row, 0);
     formLayout->addWidget(systemSelector_, row++, 1);
@@ -281,7 +282,7 @@ FeedSettingsDialog::FeedSettingsDialog(QVector<FeedConnection> connections, QWid
     storageText->setWordWrap(true);
     auto* routeTitle = new QLabel("Routing", infoPanel);
     routeTitle->setObjectName("infoSubTitle");
-    auto* routeText = new QLabel("Gateway should match the Rithmic region. System should match the broker or funding-provider environment assigned to the login.", infoPanel);
+    auto* routeText = new QLabel("Gateway should be the Rithmic Protocol WebSocket host. System should match the broker or funding-provider environment assigned to the login.", infoPanel);
     routeText->setObjectName("infoText");
     routeText->setWordWrap(true);
     infoLayout->addWidget(infoKicker);
@@ -442,7 +443,7 @@ void FeedSettingsDialog::testCurrentConnection()
         missing << "Password";
     }
     if (connection.gateway.trimmed().isEmpty()) {
-        missing << "Gateway";
+        missing << "Gateway URL";
     }
     if (connection.system.trimmed().isEmpty()) {
         missing << "System";
@@ -494,8 +495,8 @@ void FeedSettingsDialog::loadSelectedConnection()
     setComboValue(workspaceLocation_, connection.workspaceLocation, "Local");
     name_->setText(connection.name);
     setComboValue(feedSource_, connection.feedSource, "Rithmic");
-    setComboValue(gatewaySelector_, connection.gateway, "Chicago");
-    setComboValue(systemSelector_, connection.system, "Lucid Trading");
+    setComboValue(gatewaySelector_, connection.gateway, "rituz00100.rithmic.com:443");
+    setComboValue(systemSelector_, connection.system, "Rithmic Test");
     setComboValue(marketData_, connection.marketData, "Non Aggregated");
     username_->setText(connection.username);
     password_->setText(connection.password);

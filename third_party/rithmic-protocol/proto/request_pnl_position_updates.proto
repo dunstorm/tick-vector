@@ -1,0 +1,21 @@
+syntax = "proto3";
+
+package rti;
+
+message RequestPnLPositionUpdates
+	{                                
+        enum Request {
+        UNSPECIFIED = 0;
+	             SUBSCRIBE   = 1;
+		     UNSUBSCRIBE = 2;
+	             } 
+
+	int32    template_id       = 154467;
+	repeated string   user_msg          = 132760;
+	Request  request           = 100000;
+
+	string   fcm_id            = 154013;
+	string   ib_id             = 154014;
+	string   account_id        = 154008;
+	bool     rms_updates_only  = 154968;
+	}

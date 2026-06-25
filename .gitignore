@@ -4,3 +4,21 @@ build/
 *.swp
 *.swo
 compile_commands.json
+
+# CMake and compiler byproducts
+cmake-build-*/
+CMakeUserPresets.json
+*.o
+*.obj
+*.a
+*.dylib
+*.so
+*.dll
+*.exe
+
+# Local runtime state
+.tick-vector/
+*.log
+
+# Generated screenshots
+screenshots/

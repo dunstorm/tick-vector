@@ -102,6 +102,11 @@ struct MarketSnapshot {
     int speedOfTape{};
     int networkLatencyMs{};
     bool connected{};
+    bool connectionFailed{};
+    bool buildingChartData{};
+    int chartBarsLoaded{};
+    int chartBarsExpected{};
+    QString chartDataLabel;
     QString connectionLabel;
 };
 

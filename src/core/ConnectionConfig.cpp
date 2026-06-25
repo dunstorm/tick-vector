@@ -1,5 +1,7 @@
 #include "core/ConnectionConfig.hpp"
 
+#include "app/AppConstants.hpp"
+
 #include <QtCore/qtenvironmentvariables.h>
 
 namespace tc {
@@ -16,7 +18,12 @@ ConnectionConfig ConnectionConfig::fromEnvironment()
     if (!appName.isEmpty()) {
         config.appName = appName;
     }
-    config.useRealRithmic = qEnvironmentVariableIntValue("TRADING_CLIENT_USE_RITHMIC") == 1;
+    const QString appVersion = qEnvironmentVariable("RITHMIC_APP_VERSION");
+    if (!appVersion.isEmpty()) {
+        config.appVersion = appVersion;
+    }
+    config.useRealRithmic = qEnvironmentVariableIntValue(app::kUseRithmicEnv) == 1
+        || qEnvironmentVariableIntValue(app::kLegacyUseRithmicEnv) == 1;
     return config;
 }
 

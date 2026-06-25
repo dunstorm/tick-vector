@@ -1,5 +1,6 @@
 #include "core/FeedConnectionStore.hpp"
 
+#include "app/AppConstants.hpp"
 #include "core/MacKeychain.hpp"
 
 #include <QtCore/QJsonArray>
@@ -14,7 +15,7 @@ namespace tc {
 
 namespace {
 
-constexpr auto kKeychainService = "com.tradingclient.desktop.feed-connections";
+constexpr auto kKeychainService = app::kFeedConnectionsKeychainService;
 constexpr auto kKeychainAccount = "profiles-v1";
 constexpr auto kPlaintextFileName = "feed-connections.json";
 
@@ -60,7 +61,7 @@ FeedConnection fromJson(const QJsonObject& object)
     connection.account = object.value("account").toString();
     connection.username = object.value("username").toString();
     connection.password = object.value("password").toString();
-    connection.appName = object.value("appName").toString("TradingClient");
+    connection.appName = object.value("appName").toString(app::kRithmicAppName);
     connection.useDemoCredentials = object.value("useDemoCredentials").toBool(false);
     connection.connectOnStartup = object.value("connectOnStartup").toBool(false);
     return connection;
@@ -94,7 +95,7 @@ QString appDataDirectory()
 {
     QString directory = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     if (directory.isEmpty()) {
-        directory = QDir::home().filePath(".trading-client");
+        directory = QDir::home().filePath(app::kDataDirectoryFallback);
     }
     return directory;
 }

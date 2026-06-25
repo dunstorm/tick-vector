@@ -5,6 +5,8 @@
 
 #include <functional>
 
+class QObject;
+
 namespace tc {
 
 class ITradingAdapter {
@@ -23,6 +25,7 @@ public:
     virtual ExecutionReport flatten() = 0;
     virtual void cancelAll() = 0;
     virtual void setSnapshotHandler(SnapshotHandler handler) = 0;
+    virtual void addSnapshotHandler(QObject* context, SnapshotHandler handler) = 0;
 };
 
 } // namespace tc

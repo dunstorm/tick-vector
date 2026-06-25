@@ -1,0 +1,11 @@
+BasedOnStyle: WebKit
+ColumnLimit: 120
+IndentWidth: 4
+AccessModifierOffset: -4
+PointerAlignment: Left
+ReferenceAlignment: Left
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: Never
+BreakBeforeBraces: Stroustrup
+NamespaceIndentation: None
+SortIncludes: false

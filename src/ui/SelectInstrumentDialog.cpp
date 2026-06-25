@@ -28,31 +28,29 @@ struct InstrumentDefinition {
 const QVector<InstrumentDefinition>& instruments()
 {
     static const QVector<InstrumentDefinition> items{
-        {"CME", "ES", "E-mini S&P 500"},
-        {"CME", "NQ", "E-mini Nasdaq 100"},
-        {"CME", "RTY", "E-mini Russell 2000"},
-        {"CME", "6E", "Euro FX"},
-        {"CME", "6J", "Japanese Yen"},
-        {"COMEX", "GC", "Gold"},
-        {"COMEX", "SI", "Silver"},
-        {"COMEX", "HG", "Copper"},
-        {"COMEX", "PL", "Platinum"},
-        {"NYMEX", "CL", "Crude Oil"},
-        {"NYMEX", "NG", "Natural Gas"},
-        {"NYMEX", "RB", "RBOB Gasoline"},
-        {"NYMEX", "HO", "Heating Oil"},
-        {"CBOT", "ZN", "10-Year T-Note"},
-        {"CBOT", "ZB", "30-Year T-Bond"},
-        {"CBOT", "ZF", "5-Year T-Note"},
-        {"CBOT", "ZC", "Corn"},
-        {"CBOT", "ZS", "Soybeans"},
-        {"CBOT", "ZW", "Wheat"},
-        {"EUREX", "FDAX", "DAX"},
-        {"EUREX", "FESX", "Euro Stoxx 50"},
-        {"EUREX", "FGBL", "Euro-Bund"},
-        {"ICE", "DX", "US Dollar Index"},
-        {"ICE", "CC", "Cocoa"},
-        {"ICE", "KC", "Coffee"},
+        {"CME", "MNQ", "Micro E-mini Nasdaq 100 - auto best contract"},
+        {"CME", "NQ", "E-mini Nasdaq 100 - auto best contract"},
+        {"CME", "MES", "Micro E-mini S&P 500 - auto best contract"},
+        {"CME", "ES", "E-mini S&P 500 - auto best contract"},
+        {"CME", "M2K", "Micro E-mini Russell 2000 - auto best contract"},
+        {"CME", "RTY", "E-mini Russell 2000 - auto best contract"},
+        {"CME", "6E", "Euro FX - auto best contract"},
+        {"CME", "6J", "Japanese Yen - auto best contract"},
+        {"COMEX", "MGC", "Micro Gold - auto best contract"},
+        {"COMEX", "GC", "Gold - auto best contract"},
+        {"COMEX", "SI", "Silver - auto best contract"},
+        {"COMEX", "HG", "Copper - auto best contract"},
+        {"NYMEX", "CL", "Crude Oil - auto best contract"},
+        {"NYMEX", "NG", "Natural Gas - auto best contract"},
+        {"CBOT", "ZN", "10-Year T-Note - auto best contract"},
+        {"CBOT", "ZB", "30-Year T-Bond - auto best contract"},
+        {"CBOT", "ZF", "5-Year T-Note - auto best contract"},
+        {"CBOT", "ZC", "Corn - auto best contract"},
+        {"CBOT", "ZS", "Soybeans - auto best contract"},
+        {"CBOT", "ZW", "Wheat - auto best contract"},
+        {"EUREX", "FDAX", "DAX - auto best contract"},
+        {"EUREX", "FESX", "Euro Stoxx 50 - auto best contract"},
+        {"EUREX", "FGBL", "Euro-Bund - auto best contract"},
     };
     return items;
 }
@@ -285,6 +283,7 @@ void SelectInstrumentDialog::rebuildSymbols()
     symbolTable_->setRowCount(0);
     const QString query = search_->text().trimmed();
     int matches = 0;
+    int preferredRow = -1;
 
     for (const auto& instrument : instruments()) {
         const bool exchangeMatch = selectedExchange_ == "All" || instrument.exchange == selectedExchange_;
@@ -313,12 +312,15 @@ void SelectInstrumentDialog::rebuildSymbols()
         symbolTable_->setItem(row, 1, description);
         symbolTable_->setItem(row, 2, exchange);
         symbolTable_->setRowHeight(row, 34);
+        if (preferredRow < 0 && query.isEmpty() && instrument.exchange == "COMEX" && instrument.symbol == "GC") {
+            preferredRow = row;
+        }
         ++matches;
     }
 
     resultCount_->setText(QString::number(matches) + (matches == 1 ? " symbol" : " symbols"));
     if (matches > 0) {
-        symbolTable_->setCurrentCell(0, 0);
+        symbolTable_->setCurrentCell(preferredRow >= 0 ? preferredRow : 0, 0);
     } else {
         symbolTable_->clearSelection();
         symbolTable_->setCurrentCell(-1, -1);

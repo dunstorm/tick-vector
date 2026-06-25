@@ -1,5 +1,6 @@
 #include "core/AccountStore.hpp"
 
+#include "app/AppConstants.hpp"
 #include "core/MacKeychain.hpp"
 
 #include <QtCore/QJsonDocument>
@@ -15,7 +16,7 @@ namespace tc {
 
 namespace {
 
-constexpr auto kKeychainService = "com.tradingclient.desktop.rithmic";
+constexpr auto kKeychainService = app::kRithmicProfileKeychainService;
 constexpr auto kKeychainAccount = "profile-v1";
 constexpr auto kPlaintextFileName = "rithmic-profile.json";
 
@@ -32,7 +33,7 @@ QByteArray serializeConfig(const ConnectionConfig& config)
     root["password"] = config.password;
     root["system"] = config.system;
     root["gateway"] = config.gateway;
-    root["appName"] = config.appName.trimmed().isEmpty() ? "TradingClient" : config.appName.trimmed();
+    root["appName"] = config.appName.trimmed().isEmpty() ? app::kRithmicAppName : config.appName.trimmed();
     root["account"] = config.account;
     root["useRealRithmic"] = config.useRealRithmic;
     return QJsonDocument(root).toJson(QJsonDocument::Compact);
@@ -47,7 +48,7 @@ ConnectionConfig deserializeConfig(const QByteArray& payload)
     config.password = root.value("password").toString();
     config.system = root.value("system").toString();
     config.gateway = root.value("gateway").toString();
-    config.appName = root.value("appName").toString("TradingClient");
+    config.appName = root.value("appName").toString(app::kRithmicAppName);
     config.account = root.value("account").toString();
     config.useRealRithmic = root.value("useRealRithmic").toBool(false);
     return config;
@@ -62,11 +63,11 @@ void overlayEnvironment(ConnectionConfig* config)
     if (qEnvironmentVariableIsSet("RITHMIC_GATEWAY")) config->gateway = env.gateway;
     if (qEnvironmentVariableIsSet("RITHMIC_ACCOUNT")) config->account = env.account;
     if (qEnvironmentVariableIsSet("RITHMIC_APP_NAME")) config->appName = env.appName;
-    if (qEnvironmentVariableIsSet("TRADING_CLIENT_USE_RITHMIC")) {
+    if (qEnvironmentVariableIsSet(app::kUseRithmicEnv) || qEnvironmentVariableIsSet(app::kLegacyUseRithmicEnv)) {
         config->useRealRithmic = env.useRealRithmic;
     }
     if (config->appName.trimmed().isEmpty()) {
-        config->appName = "TradingClient";
+        config->appName = app::kRithmicAppName;
     }
 }
 
@@ -74,7 +75,7 @@ QString appDataDirectory()
 {
     QString directory = QStandardPaths::writableLocation(QStandardPaths::AppDataLocation);
     if (directory.isEmpty()) {
-        directory = QDir::home().filePath(".trading-client");
+        directory = QDir::home().filePath(app::kDataDirectoryFallback);
     }
     return directory;
 }

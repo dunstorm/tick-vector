@@ -3,7 +3,9 @@
 #include "core/MarketDataAdapter.hpp"
 
 #include <QtCore/QObject>
+#include <QtCore/QPointer>
 #include <QtCore/QTimer>
+#include <QtCore/QVector>
 
 namespace tc {
 
@@ -21,8 +23,15 @@ public:
     ExecutionReport flatten() override;
     void cancelAll() override;
     void setSnapshotHandler(SnapshotHandler handler) override;
+    void addSnapshotHandler(QObject* context, SnapshotHandler handler) override;
 
 private:
+    struct SnapshotListener {
+        QPointer<QObject> context;
+        SnapshotHandler handler;
+        bool hasContext{};
+    };
+
     void seed();
     void onTimer();
     void rebuildProfile();
@@ -31,7 +40,7 @@ private:
 
     QTimer timer_;
     MarketSnapshot snapshot_;
-    SnapshotHandler handler_;
+    QVector<SnapshotListener> handlers_;
     int sequence_{0};
 };
 

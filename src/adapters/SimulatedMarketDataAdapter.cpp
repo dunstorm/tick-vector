@@ -2,6 +2,7 @@
 
 #include <QtCore/QRandomGenerator>
 #include <cmath>
+#include <utility>
 
 namespace tc {
 
@@ -35,6 +36,7 @@ QString SimulatedMarketDataAdapter::name() const
 bool SimulatedMarketDataAdapter::connectAdapter(const ConnectionConfig& config)
 {
     snapshot_.connected = true;
+    snapshot_.connectionFailed = false;
     snapshot_.connectionLabel = config.useRealRithmic ? "Rithmic SDK not linked - simulator active" : "Simulator";
     snapshot_.account.account = config.account.isEmpty() ? "SIM-ACCOUNT" : config.account;
     timer_.start();
@@ -46,6 +48,7 @@ void SimulatedMarketDataAdapter::disconnectAdapter()
 {
     timer_.stop();
     snapshot_.connected = false;
+    snapshot_.connectionFailed = false;
     emitSnapshot();
 }
 
@@ -60,6 +63,7 @@ void SimulatedMarketDataAdapter::subscribe(const QString& symbol)
     snapshot_.position.symbol = symbol;
     seed();
     snapshot_.connected = true;
+    snapshot_.connectionFailed = false;
     timer_.start();
     emitSnapshot();
 }
@@ -108,7 +112,13 @@ void SimulatedMarketDataAdapter::cancelAll()
 
 void SimulatedMarketDataAdapter::setSnapshotHandler(SnapshotHandler handler)
 {
-    handler_ = std::move(handler);
+    handlers_.clear();
+    handlers_.push_back({{}, std::move(handler), false});
+}
+
+void SimulatedMarketDataAdapter::addSnapshotHandler(QObject* context, SnapshotHandler handler)
+{
+    handlers_.push_back({QPointer<QObject>(context), std::move(handler), context != nullptr});
 }
 
 void SimulatedMarketDataAdapter::seed()
@@ -199,17 +209,20 @@ void SimulatedMarketDataAdapter::onTimer()
 void SimulatedMarketDataAdapter::rebuildProfile()
 {
     snapshot_.volumeProfile.clear();
-    for (int i = 0; i < 54; ++i) {
-        const double price = 18820.0 - i * 7.5;
-        const double wave = std::abs(std::sin(i * 0.31)) * 120.0 + std::abs(std::cos(i * 0.17)) * 42.0;
+    const double center = roundToTick(snapshot_.last);
+    for (int i = -34; i <= 34; ++i) {
+        const double price = roundToTick(center - i * 0.25);
+        const double distance = std::abs(i);
+        const double bell = std::max(0.0, 180.0 - distance * 4.2);
+        const double wave = bell + std::abs(std::sin(i * 0.31)) * 64.0 + std::abs(std::cos(i * 0.17)) * 24.0;
         snapshot_.volumeProfile.push_back({
             roundToTick(price),
-            wave + (i == 18 ? 90.0 : 0.0),
+            wave + (i == 0 ? 110.0 : 0.0),
             std::sin(i * 0.37) * 500.0,
-            i == 13,
-            i == 25,
-            i == 18,
-            i == 31 || i == 43
+            i == -12,
+            i == 12,
+            i == 0,
+            i == -24 || i == 25
         });
     }
 }
@@ -229,8 +242,15 @@ void SimulatedMarketDataAdapter::rebuildDom()
 
 void SimulatedMarketDataAdapter::emitSnapshot()
 {
-    if (handler_) {
-        handler_(snapshot_);
+    for (int i = handlers_.size() - 1; i >= 0; --i) {
+        const auto& listener = handlers_.at(i);
+        if (listener.hasContext && listener.context.isNull()) {
+            handlers_.removeAt(i);
+            continue;
+        }
+        if (listener.handler) {
+            listener.handler(snapshot_);
+        }
     }
 }
 

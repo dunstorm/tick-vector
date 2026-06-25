@@ -1,9 +1,11 @@
 #pragma once
 
 #include "core/FeedConnection.hpp"
+#include "core/MarketDataAdapter.hpp"
 
 #include <QtCore/QStringList>
 #include <QtWidgets/QDialog>
+#include <memory>
 
 class QLabel;
 class QFrame;
@@ -19,11 +21,14 @@ public:
     void showSuccess();
 
 private:
+    void startTest();
     void showMissingFields();
+    void showFailure(const QString& message);
     void setGlyphState(const char* state);
 
     FeedConnection connection_;
     QStringList missingFields_;
+    std::unique_ptr<ITradingAdapter> adapter_;
     QFrame* glyph_{nullptr};
     QLabel* glyphText_{nullptr};
     QLabel* stateTitle_{nullptr};

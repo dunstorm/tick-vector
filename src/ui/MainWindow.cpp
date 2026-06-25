@@ -1,10 +1,13 @@
 #include "ui/MainWindow.hpp"
 
+#include "adapters/TradingAdapterFactory.hpp"
+#include "app/AppConstants.hpp"
 #include "ui/ChartWindow.hpp"
+#include "ui/DomWindow.hpp"
 #include "ui/FeedSettingsDialog.hpp"
 #include "ui/SelectInstrumentDialog.hpp"
 
-#include <QtCore/QTimer>
+#include <QtCore/QMetaObject>
 #include <QtGui/QMouseEvent>
 #include <QtWidgets/QApplication>
 #include <QtWidgets/QComboBox>
@@ -30,7 +33,7 @@ constexpr auto kFeedSettings = "__feed_settings__";
 MainWindow::MainWindow(QWidget* parent, bool loadSavedConnections)
     : QMainWindow(parent)
 {
-    setWindowTitle("Trading Client");
+    setWindowTitle(app::kDisplayName);
     setWindowFlags(Qt::Window | Qt::FramelessWindowHint);
     setAttribute(Qt::WA_TranslucentBackground, true);
     setFixedSize(980, 40);
@@ -74,16 +77,16 @@ QWidget* MainWindow::createToolbar()
 
     auto* brand = new QFrame(toolbar_);
     brand->setObjectName("brandGroup");
-    brand->setFixedWidth(148);
+    brand->setFixedWidth(164);
     brand->setFixedHeight(30);
     brand->installEventFilter(this);
     auto* brandLayout = new QHBoxLayout(brand);
     brandLayout->setContentsMargins(0, 0, 0, 0);
     brandLayout->setSpacing(8);
-    auto* brandMark = new QLabel("R", brand);
+    auto* brandMark = new QLabel("T", brand);
     brandMark->setObjectName("brandMark");
     brandMark->setFixedSize(24, 24);
-    auto* logo = new QLabel("RITHMIC", brand);
+    auto* logo = new QLabel("TICK VECTOR", brand);
     logo->setObjectName("brandLogo");
     logo->installEventFilter(this);
     brandLayout->addWidget(brandMark);
@@ -93,7 +96,10 @@ QWidget* MainWindow::createToolbar()
     auto* newMenu = new QMenu(toolbar_);
     priceChartAction_ = newMenu->addAction("Price Chart");
     priceChartAction_->setEnabled(false);
+    domAction_ = newMenu->addAction("DOM");
+    domAction_->setEnabled(false);
     QObject::connect(priceChartAction_, &QAction::triggered, this, [this] { openPriceChart(); });
+    QObject::connect(domAction_, &QAction::triggered, this, [this] { openDom(); });
     layout->addWidget(createMenuButton("New", newMenu));
 
     layout->addStretch();
@@ -230,6 +236,7 @@ void MainWindow::rebuildConnectionSelector()
 
     const bool ready = selectedConnectionReady();
     priceChartAction_->setEnabled(ready);
+    domAction_->setEnabled(ready);
     if (!selectedConnection) {
         setConnectionState("idle");
     } else {
@@ -242,6 +249,8 @@ void MainWindow::selectConnectionById(const QString& id)
     selectedConnectionId_ = id;
     if (selectedConnectionId_.isEmpty()) {
         ++connectionAttempt_;
+        connectionAdapter_.reset();
+        connectionStatusMessage_.clear();
         setConnectionState("idle");
         rebuildConnectionSelector();
         return;
@@ -252,6 +261,8 @@ void MainWindow::selectConnectionById(const QString& id)
     });
     if (it == connections_.end() || !it->isComplete()) {
         ++connectionAttempt_;
+        connectionAdapter_.reset();
+        connectionStatusMessage_.clear();
         setConnectionState("incomplete");
         rebuildConnectionSelector();
         return;
@@ -264,19 +275,65 @@ void MainWindow::beginConnection(const QString& id)
 {
     selectedConnectionId_ = id;
     const int attempt = ++connectionAttempt_;
+    connectionAdapter_.reset();
+    connectionStatusMessage_.clear();
     setConnectionState("connecting");
     rebuildConnectionSelector();
-    QTimer::singleShot(900, this, [this, id, attempt] {
-        if (attempt != connectionAttempt_ || id != selectedConnectionId_) {
-            return;
-        }
 
-        const auto it = std::find_if(connections_.begin(), connections_.end(), [this](const FeedConnection& connection) {
-            return connection.id == selectedConnectionId_;
-        });
-        setConnectionState(it != connections_.end() && it->isComplete() ? "connected" : "incomplete");
-        rebuildConnectionSelector();
+    const auto it = std::find_if(connections_.begin(), connections_.end(), [this](const FeedConnection& connection) {
+        return connection.id == selectedConnectionId_;
     });
+    if (it == connections_.end() || !it->isComplete()) {
+        setConnectionState("incomplete");
+        rebuildConnectionSelector();
+        return;
+    }
+
+    connectionAdapter_ = createTradingAdapter(*it, this);
+    connectionAdapter_->setSnapshotHandler([this, id, attempt](const MarketSnapshot& snapshot) {
+        QMetaObject::invokeMethod(this, [this, id, attempt, snapshot] {
+            if (attempt != connectionAttempt_ || id != selectedConnectionId_) {
+                return;
+            }
+            const QString previousState = connectionState_;
+            const QString previousMessage = connectionStatusMessage_;
+            if (snapshot.connected) {
+                connectionStatusMessage_.clear();
+                if (connectionState_ != "connected") {
+                    setConnectionState("connected");
+                }
+            } else if (snapshot.connectionFailed) {
+                connectionStatusMessage_ = snapshot.connectionLabel.trimmed();
+                if (connectionState_ != "failed" || connectionStatusMessage_ != previousMessage) {
+                    setConnectionState("failed");
+                }
+            } else if (!snapshot.connectionLabel.trimmed().isEmpty()) {
+                connectionStatusMessage_ = snapshot.connectionLabel.trimmed();
+                if (connectionState_ != "connecting" || connectionStatusMessage_ != previousMessage) {
+                    setConnectionState("connecting");
+                }
+            }
+            if (connectionState_ != previousState || connectionStatusMessage_ != previousMessage) {
+                rebuildConnectionSelector();
+            }
+        }, Qt::QueuedConnection);
+    });
+
+    const bool started = connectionAdapter_->connectAdapter(it->toConnectionConfig());
+    if (attempt != connectionAttempt_ || id != selectedConnectionId_) {
+        return;
+    }
+
+    if (!started) {
+        connectionStatusMessage_ = connectionAdapter_->snapshot().connectionLabel.trimmed();
+        setConnectionState("failed");
+    } else if (connectionAdapter_->isConnected()) {
+        connectionStatusMessage_.clear();
+        setConnectionState("connected");
+    } else {
+        setConnectionState("connecting");
+    }
+    rebuildConnectionSelector();
 }
 
 void MainWindow::setConnectionState(const QString& state)
@@ -289,6 +346,7 @@ void MainWindow::setConnectionState(const QString& state)
     if (state == "idle" || selectedConnectionId_.isEmpty()) {
         statusPill_->hide();
         priceChartAction_->setEnabled(false);
+        domAction_->setEnabled(false);
         return;
     }
 
@@ -299,19 +357,29 @@ void MainWindow::setConnectionState(const QString& state)
         statusLabel_->setText("Connecting");
     } else if (state == "connected") {
         statusLabel_->setText("Connected");
-    } else {
+    } else if (state == "incomplete") {
         statusLabel_->setText("Incomplete");
+    } else if (state == "failed") {
+        statusLabel_->setText(connectionStatusMessage_.contains("linked", Qt::CaseInsensitive) ? "Not linked" : "Failed");
+    } else {
+        statusLabel_->setText("Disconnected");
     }
+    statusPill_->setToolTip(connectionStatusMessage_);
     statusPill_->style()->unpolish(statusPill_);
     statusPill_->style()->polish(statusPill_);
     statusDot_->style()->unpolish(statusDot_);
     statusDot_->style()->polish(statusDot_);
-    priceChartAction_->setEnabled(selectedConnectionReady());
+    const bool ready = selectedConnectionReady();
+    priceChartAction_->setEnabled(ready);
+    domAction_->setEnabled(ready);
 }
 
 bool MainWindow::selectedConnectionReady() const
 {
     if (connectionState_ != "connected") {
+        return false;
+    }
+    if (!connectionAdapter_ || !connectionAdapter_->isConnected()) {
         return false;
     }
     const auto it = std::find_if(connections_.begin(), connections_.end(), [this](const FeedConnection& connection) {
@@ -367,7 +435,7 @@ void MainWindow::openPriceChart()
         return;
     }
 
-    auto* chart = new ChartWindow(*it, dialog.selectedSymbol(), dialog.selectedExchange());
+    auto* chart = new ChartWindow(*it, connectionAdapter_.get(), dialog.selectedSymbol(), dialog.selectedExchange());
     chart->setAttribute(Qt::WA_DeleteOnClose, true);
     chartWindows_.push_back(chart);
     QObject::connect(chart, &QObject::destroyed, this, [this, chart] {
@@ -376,6 +444,32 @@ void MainWindow::openPriceChart()
     chart->show();
     chart->raise();
     chart->activateWindow();
+}
+
+void MainWindow::openDom()
+{
+    const auto it = std::find_if(connections_.begin(), connections_.end(), [this](const FeedConnection& connection) {
+        return connection.id == selectedConnectionId_;
+    });
+    if (it == connections_.end() || !it->isComplete() || !selectedConnectionReady()) {
+        setConnectionState(it != connections_.end() && it->isComplete() ? "connecting" : "incomplete");
+        return;
+    }
+
+    SelectInstrumentDialog dialog(this);
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    auto* dom = new DomWindow(*it, connectionAdapter_.get(), dialog.selectedSymbol(), dialog.selectedExchange());
+    dom->setAttribute(Qt::WA_DeleteOnClose, true);
+    domWindows_.push_back(dom);
+    QObject::connect(dom, &QObject::destroyed, this, [this, dom] {
+        domWindows_.removeOne(dom);
+    });
+    dom->show();
+    dom->raise();
+    dom->activateWindow();
 }
 
 bool MainWindow::eventFilter(QObject* watched, QEvent* event)
@@ -433,7 +527,7 @@ void MainWindow::applyStyle()
             color: #f4f6f9;
             font-size: 13px;
             font-weight: 900;
-            letter-spacing: 2px;
+            letter-spacing: 0;
             padding-left: 0;
         }
         QPushButton#windowClose,
@@ -497,6 +591,10 @@ void MainWindow::applyStyle()
             border-color: #7f3d45;
             background: #201316;
         }
+        QFrame#connectionStatusPill[state="failed"] {
+            border-color: #7f3d45;
+            background: #201316;
+        }
         QFrame#connectionStatusDot {
             border: 0;
             border-radius: 4px;
@@ -509,6 +607,9 @@ void MainWindow::applyStyle()
             background: #6fdc64;
         }
         QFrame#connectionStatusDot[state="incomplete"] {
+            background: #ff7474;
+        }
+        QFrame#connectionStatusDot[state="failed"] {
             background: #ff7474;
         }
         QComboBox#workspaceSelector,
@@ -596,7 +697,7 @@ void MainWindow::applyStyle()
             color: #eef2f7;
             font-size: 13px;
             font-weight: 900;
-            letter-spacing: 1px;
+            letter-spacing: 0;
         }
         QFrame#dialogContent {
             background: #0f1218;
@@ -608,7 +709,7 @@ void MainWindow::applyStyle()
             color: #7f8b9c;
             font-size: 10px;
             font-weight: 900;
-            letter-spacing: 1px;
+            letter-spacing: 0;
             padding-left: 3px;
         }
         QListWidget#connectionList {
@@ -709,7 +810,7 @@ void MainWindow::applyStyle()
             color: #6fdc64;
             font-size: 10px;
             font-weight: 900;
-            letter-spacing: 1px;
+            letter-spacing: 0;
         }
         QLabel#infoTitle {
             color: #ffffff;

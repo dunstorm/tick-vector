@@ -1,8 +1,10 @@
 #include "ui/ConnectionTestDialog.hpp"
 
+#include "adapters/TradingAdapterFactory.hpp"
+
+#include <QtCore/QMetaObject>
 #include <QtCore/QTimer>
 #include <QtWidgets/QFrame>
-#include <QtWidgets/QGraphicsDropShadowEffect>
 #include <QtWidgets/QHBoxLayout>
 #include <QtWidgets/QLabel>
 #include <QtWidgets/QProgressBar>
@@ -21,19 +23,14 @@ ConnectionTestDialog::ConnectionTestDialog(FeedConnection connection, QStringLis
     setWindowTitle("Test Connection");
     setModal(true);
     setWindowFlags(Qt::Dialog | Qt::FramelessWindowHint);
-    setAttribute(Qt::WA_TranslucentBackground, true);
+    setAttribute(Qt::WA_TranslucentBackground, false);
     setFixedSize(430, 226);
 
     auto* shell = new QFrame(this);
     shell->setObjectName("testDialogShell");
-    auto* shadow = new QGraphicsDropShadowEffect(shell);
-    shadow->setBlurRadius(34);
-    shadow->setOffset(0, 14);
-    shadow->setColor(QColor(0, 0, 0, 170));
-    shell->setGraphicsEffect(shadow);
 
     auto* root = new QVBoxLayout(this);
-    root->setContentsMargins(8, 8, 8, 8);
+    root->setContentsMargins(0, 0, 0, 0);
     root->setSpacing(0);
     root->addWidget(shell);
 
@@ -93,6 +90,7 @@ ConnectionTestDialog::ConnectionTestDialog(FeedConnection connection, QStringLis
     stateDetail_ = new QLabel(copyColumn);
     stateDetail_->setObjectName("testDialogStateDetail");
     stateDetail_->setWordWrap(true);
+    stateDetail_->setMinimumHeight(42);
 
     progress_ = new QProgressBar(copyColumn);
     progress_->setObjectName("testProgress");
@@ -130,10 +128,42 @@ ConnectionTestDialog::ConnectionTestDialog(FeedConnection connection, QStringLis
     stateDetail_->setText(QString("Opening %1 session for %2.")
                               .arg(connection_.feedSource.trimmed().isEmpty() ? "Rithmic" : connection_.feedSource.trimmed(),
                                   connection_.username.trimmed()));
-    progress_->setRange(0, 100);
-    progress_->setValue(48);
+    progress_->setRange(0, 0);
 
-    QTimer::singleShot(900, this, [this] { showSuccess(); });
+    QTimer::singleShot(0, this, [this] { startTest(); });
+}
+
+void ConnectionTestDialog::startTest()
+{
+    adapter_ = createTradingAdapter(connection_, this);
+    adapter_->setSnapshotHandler([this](const MarketSnapshot& snapshot) {
+        QMetaObject::invokeMethod(this, [this, snapshot] {
+            if (snapshot.connected) {
+                showSuccess();
+            } else if (!snapshot.connectionLabel.trimmed().isEmpty()) {
+                showFailure(snapshot.connectionLabel.trimmed());
+            }
+        }, Qt::QueuedConnection);
+    });
+
+    const bool started = adapter_->connectAdapter(connection_.toConnectionConfig());
+    if (!started) {
+        const QString message = adapter_->snapshot().connectionLabel.trimmed();
+        showFailure(message.isEmpty() ? "The feed adapter did not start a session." : message);
+        return;
+    }
+
+    if (adapter_->isConnected()) {
+        showSuccess();
+        return;
+    }
+
+    QTimer::singleShot(15000, this, [this] {
+        if (adapter_ && !adapter_->isConnected()) {
+            const QString message = adapter_->snapshot().connectionLabel.trimmed();
+            showFailure(message.isEmpty() ? "Rithmic connection timed out." : message);
+        }
+    });
 }
 
 void ConnectionTestDialog::showSuccess()
@@ -143,9 +173,23 @@ void ConnectionTestDialog::showSuccess()
     stateDetail_->setText("The connection profile is valid and ready to use.");
     progress_->setRange(0, 100);
     progress_->setValue(100);
+    progress_->show();
     actionButton_->setText("Done");
     disconnect(actionButton_, &QPushButton::clicked, this, &QDialog::reject);
-    connect(actionButton_, &QPushButton::clicked, this, &QDialog::accept);
+    connect(actionButton_, &QPushButton::clicked, this, &QDialog::accept, Qt::UniqueConnection);
+}
+
+void ConnectionTestDialog::showFailure(const QString& message)
+{
+    setGlyphState("error");
+    stateTitle_->setText("Connection Failed");
+    stateDetail_->setText(message);
+    progress_->setRange(0, 100);
+    progress_->setValue(0);
+    progress_->hide();
+    actionButton_->setText("Close");
+    disconnect(actionButton_, &QPushButton::clicked, this, &QDialog::reject);
+    connect(actionButton_, &QPushButton::clicked, this, &QDialog::reject, Qt::UniqueConnection);
 }
 
 void ConnectionTestDialog::showMissingFields()

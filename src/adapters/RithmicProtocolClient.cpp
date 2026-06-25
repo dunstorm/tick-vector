@@ -62,6 +62,18 @@ QString withProtocolPrefix(QString url)
     return url;
 }
 
+QString intervalLabel(int barMinutes)
+{
+    const int minutes = std::max(barMinutes, 1);
+    if (minutes % 1440 == 0) {
+        return QString::number(minutes / 1440) + "D";
+    }
+    if (minutes % 60 == 0) {
+        return QString::number(minutes / 60) + "h";
+    }
+    return QString::number(minutes) + "m";
+}
+
 QString firstErrorCode(const google::protobuf::MessageLite& message)
 {
     const auto* reflected = dynamic_cast<const google::protobuf::Message*>(&message);
@@ -257,7 +269,7 @@ bool RithmicProtocolClient::requestTimeBarBackfill(const QString& symbol, const 
         symbol.trimmed(),
         exchange.trimmed(),
         std::max(barMinutes, 1),
-        std::clamp(maxBars, 1, 2000)
+        std::clamp(maxBars, 1, 20000)
     };
     historyBarsLoaded_ = 0;
 
@@ -718,7 +730,7 @@ void RithmicProtocolClient::handleHistoryPayload(const QByteArray& payload)
                 delta
             };
             if (historyBarHandler_) {
-                historyBarHandler_(candle, historyBarsLoaded_, pendingHistoryRequest_.maxBars);
+                historyBarHandler_(candle, historyBarsLoaded_, pendingHistoryRequest_.maxBars, static_cast<qint64>(response.num_trades()));
             }
             historyCompletionTimer_.start(2500);
             break;
@@ -843,7 +855,9 @@ bool RithmicProtocolClient::sendPendingHistoryRequest()
     request.set_direction(rti::RequestTimeBarReplay::FIRST);
     request.set_time_order(rti::RequestTimeBarReplay::FORWARDS);
     request.set_resume_bars(false);
-    publishStatus("Building chart data: 0 / " + QString::number(pendingHistoryRequest_.maxBars) + " bars.");
+    const int lookbackDays = std::max(1, pendingHistoryRequest_.barMinutes * pendingHistoryRequest_.maxBars / (24 * 60));
+    publishStatus("Downloading " + QString::number(lookbackDays) + "D " + intervalLabel(pendingHistoryRequest_.barMinutes)
+        + " chart data for " + pendingHistoryRequest_.exchange + ":" + pendingHistoryRequest_.symbol + "...");
     historyCompletionTimer_.start(15000);
     return sendMessage(historySocket_, request);
 }

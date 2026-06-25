@@ -2,6 +2,7 @@
   <qresource prefix="/icons">
     <file alias="chevron-down.svg">assets/icons/chevron-down.svg</file>
     <file alias="indicator.svg">assets/icons/indicator.svg</file>
+    <file alias="settings.svg">assets/icons/settings.svg</file>
     <file alias="tool-arrow.svg">assets/icons/tool-arrow.svg</file>
     <file alias="tool-rectangle.svg">assets/icons/tool-rectangle.svg</file>
   </qresource>

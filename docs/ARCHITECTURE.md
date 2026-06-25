@@ -19,6 +19,17 @@ Tick Vector is a native Qt desktop workstation with a small application shell, m
 
 `RithmicProtocolClient` handles the wire protocol, websocket lifecycle, login/system validation, heartbeats, subscriptions, and protobuf parsing. `RithmicMarketDataAdapter` translates protocol callbacks into Tick Vector snapshots, candles, and DOM levels.
 
+## Chart Data
+
+Live subscription and historical chart loading are separate adapter operations:
+
+- `ITradingAdapter::subscribe` attaches the selected instrument to live market data.
+- `ITradingAdapter::requestChartData` asks the adapter for heavier historical data.
+
+This keeps DOM/live views from triggering expensive history downloads. Chart windows can request a 10D backfill, reuse cached candles when available, and report progress through `MarketSnapshot` fields such as `chartTicksLoaded`, `chartDaysLoaded`, and `chartBarsLoaded`.
+
+Historical chart candles are persisted through `ChartDataCache` in `src/core`, under the app data `chart-cache` directory. Adapters may read/write this cache, but UI code should continue to request chart data only through `ITradingAdapter`.
+
 ## Build Boundaries
 
 CMake mirrors the source architecture with internal targets:

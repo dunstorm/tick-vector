@@ -106,8 +106,19 @@ struct MarketSnapshot {
     bool buildingChartData{};
     int chartBarsLoaded{};
     int chartBarsExpected{};
+    qint64 chartTicksLoaded{};
+    int chartDaysLoaded{};
+    int chartDaysExpected{};
     QString chartDataLabel;
     QString connectionLabel;
+};
+
+struct ChartDataRequest {
+    QString symbol;
+    QString exchange;
+    int lookbackDays{10};
+    int barMinutes{2};
+    bool allowCached{true};
 };
 
 struct OrderRequest {

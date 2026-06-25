@@ -43,7 +43,7 @@ public:
     using TradeHandler = std::function<void(const RithmicTradeTick&)>;
     using BboHandler = std::function<void(const RithmicBboTick&)>;
     using OrderBookHandler = std::function<void(const QVector<DomLevel>&)>;
-    using HistoryBarHandler = std::function<void(const Candle&, int loaded, int expected)>;
+    using HistoryBarHandler = std::function<void(const Candle&, int loaded, int expected, qint64 trades)>;
     using HistoryFinishedHandler = std::function<void(bool ok, const QString& message)>;
     using FrontMonthHandler = std::function<void(bool ok, const QString& symbol, const QString& exchange, const QString& message)>;
 

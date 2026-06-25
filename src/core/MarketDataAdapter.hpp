@@ -20,6 +20,7 @@ public:
     virtual void disconnectAdapter() = 0;
     virtual bool isConnected() const = 0;
     virtual void subscribe(const QString& symbol) = 0;
+    virtual bool requestChartData(const ChartDataRequest& request) { return false; }
     virtual MarketSnapshot snapshot() const = 0;
     virtual ExecutionReport submitMarketOrder(const OrderRequest& request) = 0;
     virtual ExecutionReport flatten() = 0;

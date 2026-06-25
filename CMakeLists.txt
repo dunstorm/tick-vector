@@ -46,6 +46,7 @@ protobuf_generate_cpp(RITHMIC_PROTOCOL_SRCS RITHMIC_PROTOCOL_HDRS ${RITHMIC_PROT
 
 set(TICK_VECTOR_CORE_SOURCES
     src/core/AccountStore.cpp
+    src/core/ChartDataCache.cpp
     src/core/ConnectionConfig.cpp
     src/core/FeedConnectionStore.cpp
     src/core/MacKeychain.cpp
@@ -54,6 +55,7 @@ set(TICK_VECTOR_CORE_SOURCES
 set(TICK_VECTOR_CORE_HEADERS
     src/app/AppConstants.hpp
     src/core/AccountStore.hpp
+    src/core/ChartDataCache.hpp
     src/core/ConnectionConfig.hpp
     src/core/FeedConnection.hpp
     src/core/FeedConnectionStore.hpp

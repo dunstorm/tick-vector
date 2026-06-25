@@ -1,11 +1,14 @@
 #pragma once
 
 #include "adapters/RithmicProtocolClient.hpp"
+#include "core/ChartDataCache.hpp"
 #include "core/MarketDataAdapter.hpp"
 
+#include <QtCore/QDate>
 #include <QtCore/QObject>
 #include <QtCore/QHash>
 #include <QtCore/QPointer>
+#include <QtCore/QSet>
 #include <QtCore/QVector>
 #include <memory>
 
@@ -20,6 +23,7 @@ public:
     void disconnectAdapter() override;
     bool isConnected() const override;
     void subscribe(const QString& symbol) override;
+    bool requestChartData(const ChartDataRequest& request) override;
     MarketSnapshot snapshot() const override;
     ExecutionReport submitMarketOrder(const OrderRequest& request) override;
     ExecutionReport flatten() override;
@@ -40,13 +44,17 @@ private:
     void handleTrade(const RithmicTradeTick& trade);
     void handleBbo(const RithmicBboTick& bbo);
     void handleOrderBook(const QVector<DomLevel>& levels);
-    void handleHistoricalBar(const Candle& candle, int loaded, int expected);
+    void handleHistoricalBar(const Candle& candle, int loaded, int expected, qint64 trades);
     void handleHistoryFinished(bool ok, const QString& message);
     void handleFrontMonth(bool ok, const QString& symbol, const QString& exchange, const QString& message);
     void resolvePendingSymbol();
     void subscribePendingSymbol();
-    void startChartBackfill();
+    bool startChartBackfill(bool allowCached);
     void restoreCachedCandles();
+    void rememberCandleCache();
+    void persistCandleCache(bool force);
+    int activeLookbackDays() const;
+    int activeBarMinutes() const;
     void mergeCandle(const Candle& candle);
     void upsertCandle(const RithmicTradeTick& trade);
     void updateProfileFromTrade(const RithmicTradeTick& trade);
@@ -62,6 +70,13 @@ private:
     QString requestedRootSymbol_;
     QHash<QString, QVector<Candle>> candleCache_;
     QHash<QString, QDateTime> candleCacheRefreshedAt_;
+    ChartDataCache chartDataCache_;
+    QSet<QDate> backfillLoadedDates_;
+    qint64 backfillTicksLoaded_{0};
+    QDateTime lastCachePersistedAt_;
+    ChartDataRequest pendingChartDataRequest_;
+    bool chartDataRequested_{false};
+    bool candleCacheDirty_{false};
     bool resolvingFrontMonth_{false};
     bool connectionStarted_{false};
 };

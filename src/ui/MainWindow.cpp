@@ -7,6 +7,7 @@
 #include "ui/FeedSettingsDialog.hpp"
 #include "ui/SelectInstrumentDialog.hpp"
 
+#include <QtCore/QCryptographicHash>
 #include <QtCore/QMetaObject>
 #include <QtGui/QMouseEvent>
 #include <QtWidgets/QApplication>
@@ -27,6 +28,32 @@ namespace {
 
 constexpr auto kNoConnection = "__none__";
 constexpr auto kFeedSettings = "__feed_settings__";
+
+QString connectionFingerprint(const FeedConnection& connection)
+{
+    QByteArray payload;
+    const auto append = [&payload](const QString& value) {
+        const QByteArray utf8 = value.toUtf8();
+        payload.append(QByteArray::number(utf8.size()));
+        payload.append(':');
+        payload.append(utf8);
+        payload.append('\n');
+    };
+
+    append(connection.id);
+    append(connection.feedSource.trimmed());
+    append(connection.gateway.trimmed());
+    append(connection.server.trimmed());
+    append(connection.system.trimmed());
+    append(connection.marketData.trimmed());
+    append(connection.account.trimmed());
+    append(connection.username.trimmed());
+    append(connection.password);
+    append(connection.appName.trimmed());
+    append(connection.useDemoCredentials ? QStringLiteral("1") : QStringLiteral("0"));
+
+    return QString::fromLatin1(QCryptographicHash::hash(payload, QCryptographicHash::Sha256).toHex());
+}
 
 } // namespace
 
@@ -246,22 +273,35 @@ void MainWindow::rebuildConnectionSelector()
 
 void MainWindow::selectConnectionById(const QString& id)
 {
-    selectedConnectionId_ = id;
-    if (selectedConnectionId_.isEmpty()) {
-        ++connectionAttempt_;
-        connectionAdapter_.reset();
+    if (id.isEmpty()) {
+        if (selectedConnectionId_.isEmpty() && !connectionAdapter_) {
+            rebuildConnectionSelector();
+            return;
+        }
+
+        selectedConnectionId_.clear();
+        disconnectActiveConnection();
         connectionStatusMessage_.clear();
         setConnectionState("idle");
         rebuildConnectionSelector();
         return;
     }
 
-    const auto it = std::find_if(connections_.begin(), connections_.end(), [this](const FeedConnection& connection) {
-        return connection.id == selectedConnectionId_;
+    const auto it = std::find_if(connections_.begin(), connections_.end(), [&id](const FeedConnection& connection) {
+        return connection.id == id;
     });
+
+    if (it != connections_.end() && it->isComplete()) {
+        const QString fingerprint = connectionFingerprint(*it);
+        if (id == selectedConnectionId_ && connectionAdapter_ && activeConnectionId_ == id && activeConnectionFingerprint_ == fingerprint) {
+            rebuildConnectionSelector();
+            return;
+        }
+    }
+
+    selectedConnectionId_ = id;
     if (it == connections_.end() || !it->isComplete()) {
-        ++connectionAttempt_;
-        connectionAdapter_.reset();
+        disconnectActiveConnection();
         connectionStatusMessage_.clear();
         setConnectionState("incomplete");
         rebuildConnectionSelector();
@@ -274,20 +314,30 @@ void MainWindow::selectConnectionById(const QString& id)
 void MainWindow::beginConnection(const QString& id)
 {
     selectedConnectionId_ = id;
-    const int attempt = ++connectionAttempt_;
-    connectionAdapter_.reset();
-    connectionStatusMessage_.clear();
-    setConnectionState("connecting");
-    rebuildConnectionSelector();
-
-    const auto it = std::find_if(connections_.begin(), connections_.end(), [this](const FeedConnection& connection) {
-        return connection.id == selectedConnectionId_;
+    const auto it = std::find_if(connections_.begin(), connections_.end(), [&id](const FeedConnection& connection) {
+        return connection.id == id;
     });
     if (it == connections_.end() || !it->isComplete()) {
+        disconnectActiveConnection();
+        connectionStatusMessage_.clear();
         setConnectionState("incomplete");
         rebuildConnectionSelector();
         return;
     }
+
+    const QString fingerprint = connectionFingerprint(*it);
+    if (connectionAdapter_ && activeConnectionId_ == id && activeConnectionFingerprint_ == fingerprint) {
+        rebuildConnectionSelector();
+        return;
+    }
+
+    disconnectActiveConnection();
+    const int attempt = ++connectionAttempt_;
+    activeConnectionId_ = id;
+    activeConnectionFingerprint_ = fingerprint;
+    connectionStatusMessage_.clear();
+    setConnectionState("connecting");
+    rebuildConnectionSelector();
 
     connectionAdapter_ = createTradingAdapter(*it, this);
     connectionAdapter_->setSnapshotHandler([this, id, attempt](const MarketSnapshot& snapshot) {
@@ -334,6 +384,21 @@ void MainWindow::beginConnection(const QString& id)
         setConnectionState("connecting");
     }
     rebuildConnectionSelector();
+}
+
+void MainWindow::disconnectActiveConnection()
+{
+    if (!connectionAdapter_ && activeConnectionId_.isEmpty()) {
+        return;
+    }
+
+    ++connectionAttempt_;
+    if (connectionAdapter_) {
+        connectionAdapter_->disconnectAdapter();
+        connectionAdapter_.reset();
+    }
+    activeConnectionId_.clear();
+    activeConnectionFingerprint_.clear();
 }
 
 void MainWindow::setConnectionState(const QString& state)
@@ -410,14 +475,11 @@ void MainWindow::showFeedSettings()
         }
     }
     if (!selectedStillExists) {
-        selectedConnectionId_.clear();
+        selectConnectionById({});
+        return;
     }
-    if (selectedConnectionId_.isEmpty()) {
-        setConnectionState("idle");
-        rebuildConnectionSelector();
-    } else {
-        beginConnection(selectedConnectionId_);
-    }
+
+    selectConnectionById(selectedConnectionId_);
 }
 
 void MainWindow::openPriceChart()

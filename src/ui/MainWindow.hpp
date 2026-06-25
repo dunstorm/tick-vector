@@ -38,6 +38,7 @@ private:
     void rebuildConnectionSelector();
     void selectConnectionById(const QString& id);
     void beginConnection(const QString& id);
+    void disconnectActiveConnection();
     void setConnectionState(const QString& state);
     bool selectedConnectionReady() const;
     void showFeedSettings();
@@ -49,6 +50,8 @@ private:
     QVector<FeedConnection> connections_;
     std::unique_ptr<ITradingAdapter> connectionAdapter_;
     QString selectedConnectionId_;
+    QString activeConnectionId_;
+    QString activeConnectionFingerprint_;
     QString connectionState_{"idle"};
     QString connectionStatusMessage_;
     int connectionAttempt_{0};

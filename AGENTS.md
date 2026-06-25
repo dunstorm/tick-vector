@@ -35,6 +35,12 @@ Do not make every feed subscription download history. DOM/live views should be a
 
 Historical chart candles are cached by `src/core/ChartDataCache` under the app data `chart-cache` directory. Keep cache file paths and serialization in core; adapters may call the cache service, but UI should not read/write cache files directly.
 
+## Chart Indicators
+
+Feed-derived indicators that require live tick interpretation belong behind the adapter boundary and should flow through `MarketSnapshot` using core types. For example, Rithmic big-trade aggregation is derived in `src/adapters` and exposed as `MarketSnapshot::bigTrades`.
+
+Chart overlays, drawing tools, and pixel-space interaction belong in `src/ui/ChartWindow`. UI can derive view-local overlays such as VWAP or anchored volume profile from `MarketSnapshot::candles`, but it should not reach into adapter protocol types or cache files.
+
 ## Local Checks
 
 Before committing, run:

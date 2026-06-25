@@ -32,6 +32,7 @@ struct BigTrade {
     double price{};
     int lots{};
     AggressorSide side{AggressorSide::Unknown};
+    QDateTime time;
 };
 
 struct ProfileBin {

@@ -6,6 +6,7 @@
 #include <QtCharts/QChartView>
 #include <QtCharts/QDateTimeAxis>
 #include <QtCharts/QLineSeries>
+#include <QtCharts/QScatterSeries>
 #include <QtCharts/QValueAxis>
 #include <QtCore/QMetaObject>
 #include <QtCore/QSettings>
@@ -20,7 +21,11 @@
 #include <QtGui/QWheelEvent>
 #include <QtGui/QIcon>
 #include <QtGui/QPainter>
+#include <QtWidgets/QGraphicsEllipseItem>
+#include <QtWidgets/QGraphicsItemGroup>
 #include <QtWidgets/QGraphicsLayout>
+#include <QtWidgets/QGraphicsLineItem>
+#include <QtWidgets/QGraphicsRectItem>
 #include <QtWidgets/QColorDialog>
 #include <QtWidgets/QComboBox>
 #include <QtWidgets/QDialog>
@@ -234,8 +239,11 @@ protected:
 
 class IndicatorDialog final : public QDialog {
 public:
-    explicit IndicatorDialog(QWidget* parent = nullptr)
+    using SelectHandler = std::function<void(const QString&)>;
+
+    explicit IndicatorDialog(SelectHandler selectHandler, QWidget* parent = nullptr)
         : QDialog(parent)
+        , selectHandler_(std::move(selectHandler))
     {
         setWindowTitle("Indicators");
         setModal(false);
@@ -254,11 +262,11 @@ public:
         titleLayout->setSpacing(8);
         auto* title = new QLabel("Indicators", titleBar);
         title->setObjectName("indicatorTitle");
-        auto* close = new QPushButton(titleBar);
-        close->setObjectName("windowClose");
-        close->setFixedSize(12, 12);
-        connect(close, &QPushButton::clicked, this, &QDialog::close);
-        titleLayout->addWidget(close);
+        auto* closeButton = new QPushButton(titleBar);
+        closeButton->setObjectName("windowClose");
+        closeButton->setFixedSize(12, 12);
+        connect(closeButton, &QPushButton::clicked, this, &QDialog::close);
+        titleLayout->addWidget(closeButton);
         titleLayout->addSpacing(4);
         titleLayout->addWidget(title);
         titleLayout->addStretch();
@@ -275,16 +283,26 @@ public:
         search->setFixedHeight(32);
         bodyLayout->addWidget(search);
 
-        for (const auto& name : {"Volume", "VWAP", "Moving Average", "Delta", "Volume Profile"}) {
-            auto* row = new QPushButton(name, body);
+        for (const auto& name : {"VWAP", "Big Trades", "Volume Profile", "Volume", "Delta"}) {
+            const QString indicatorName = QString::fromLatin1(name);
+            auto* row = new QPushButton(indicatorName, body);
             row->setObjectName("indicatorRow");
             row->setFixedHeight(32);
             row->setCursor(Qt::PointingHandCursor);
+            connect(row, &QPushButton::clicked, this, [this, indicatorName] {
+                if (selectHandler_) {
+                    selectHandler_(indicatorName);
+                }
+                close();
+            });
             bodyLayout->addWidget(row);
         }
         bodyLayout->addStretch();
         root->addWidget(body, 1);
     }
+
+private:
+    SelectHandler selectHandler_;
 };
 
 class ChartSettingsDialog final : public QDialog {
@@ -637,8 +655,19 @@ QWidget* ChartWindow::createToolRail()
     auto* layout = new QVBoxLayout(rail);
     layout->setContentsMargins(7, 8, 7, 8);
     layout->setSpacing(8);
-    layout->addWidget(makeIconButton({}, "Arrow", rail, ":/icons/tool-arrow.svg"));
-    layout->addWidget(makeIconButton({}, "Rectangle", rail, ":/icons/tool-rectangle.svg"));
+    pointerToolButton_ = makeIconButton({}, "Arrow", rail, ":/icons/tool-arrow.svg");
+    rectangleToolButton_ = makeIconButton({}, "Rectangle", rail, ":/icons/tool-rectangle.svg");
+    volumeProfileToolButton_ = makeIconButton({}, "Anchored volume profile", rail, ":/icons/tool-volume-profile.svg");
+    for (auto* button : {pointerToolButton_, rectangleToolButton_, volumeProfileToolButton_}) {
+        button->setCheckable(true);
+    }
+    pointerToolButton_->setChecked(true);
+    connect(pointerToolButton_, &QToolButton::clicked, this, [this] { setActiveTool(ChartTool::Pointer); });
+    connect(rectangleToolButton_, &QToolButton::clicked, this, [this] { setActiveTool(ChartTool::Rectangle); });
+    connect(volumeProfileToolButton_, &QToolButton::clicked, this, [this] { setActiveTool(ChartTool::VolumeProfile); });
+    layout->addWidget(pointerToolButton_);
+    layout->addWidget(rectangleToolButton_);
+    layout->addWidget(volumeProfileToolButton_);
     layout->addStretch();
     return rail;
 }
@@ -723,6 +752,35 @@ QWidget* ChartWindow::createCandlestickChart()
     chart_->addAxis(axisY_, Qt::AlignRight);
     candleSeries_->attachAxis(axisY_);
 
+    vwapSeries_ = new QLineSeries;
+    vwapSeries_->setName("VWAP");
+    QPen vwapPen(QColor("#f0c567"));
+    vwapPen.setWidthF(1.35);
+    vwapSeries_->setPen(vwapPen);
+    chart_->addSeries(vwapSeries_);
+    vwapSeries_->attachAxis(axisX_);
+    vwapSeries_->attachAxis(axisY_);
+
+    bigTradeBuySeries_ = new QScatterSeries;
+    bigTradeBuySeries_->setName("Big buy trades");
+    bigTradeBuySeries_->setMarkerShape(QScatterSeries::MarkerShapeCircle);
+    bigTradeBuySeries_->setMarkerSize(9.5);
+    bigTradeBuySeries_->setColor(QColor("#00ff3b"));
+    bigTradeBuySeries_->setBorderColor(QColor("#041008"));
+    chart_->addSeries(bigTradeBuySeries_);
+    bigTradeBuySeries_->attachAxis(axisX_);
+    bigTradeBuySeries_->attachAxis(axisY_);
+
+    bigTradeSellSeries_ = new QScatterSeries;
+    bigTradeSellSeries_->setName("Big sell trades");
+    bigTradeSellSeries_->setMarkerShape(QScatterSeries::MarkerShapeCircle);
+    bigTradeSellSeries_->setMarkerSize(9.5);
+    bigTradeSellSeries_->setColor(QColor("#8b25ff"));
+    bigTradeSellSeries_->setBorderColor(QColor("#120520"));
+    chart_->addSeries(bigTradeSellSeries_);
+    bigTradeSellSeries_->attachAxis(axisX_);
+    bigTradeSellSeries_->attachAxis(axisY_);
+
     currentPriceLine_ = new QLineSeries;
     currentPriceLine_->setName("Current price");
     QPen priceLinePen(QColor("#00ff3b"));
@@ -732,6 +790,10 @@ QWidget* ChartWindow::createCandlestickChart()
     chart_->addSeries(currentPriceLine_);
     currentPriceLine_->attachAxis(axisX_);
     currentPriceLine_->attachAxis(axisY_);
+    connect(chart_, &QChart::plotAreaChanged, this, [this](const QRectF&) {
+        renderAnchoredVolumeProfile();
+        updateCurrentPriceLabel();
+    });
 
     auto* view = new InteractiveChartView(chart_, panel);
     chartView_ = view;
@@ -765,7 +827,7 @@ QPushButton* ChartWindow::createWindowControl(const QString& objectName)
 
 void ChartWindow::showIndicators()
 {
-    auto* dialog = new IndicatorDialog(this);
+    auto* dialog = new IndicatorDialog([this](const QString& name) { toggleIndicator(name); }, this);
     dialog->setAttribute(Qt::WA_DeleteOnClose, true);
     dialog->show();
     dialog->raise();
@@ -868,6 +930,7 @@ void ChartWindow::renderSnapshot(const MarketSnapshot& snapshot)
 
     const bool hadCandles = !candles_.isEmpty();
     const qint64 previousEnd = hadCandles ? candles_.last().time.toMSecsSinceEpoch() : 0;
+    bigTrades_ = snapshot.bigTrades;
     candles_ = snapshot.candles;
     candles_.erase(std::remove_if(candles_.begin(), candles_.end(), [](const Candle& candle) {
         return !isRenderableCandle(candle);
@@ -893,6 +956,8 @@ void ChartWindow::renderSnapshot(const MarketSnapshot& snapshot)
         if (candleDataChanged) {
             renderCandles();
             renderedCandleFingerprint_ = fingerprint;
+        } else {
+            renderIndicators();
         }
         return;
     }
@@ -908,6 +973,8 @@ void ChartWindow::renderSnapshot(const MarketSnapshot& snapshot)
         if (candleDataChanged) {
             renderCandles();
             renderedCandleFingerprint_ = fingerprint;
+        } else {
+            renderIndicators();
         }
         return;
     }
@@ -919,6 +986,9 @@ void ChartWindow::renderSnapshot(const MarketSnapshot& snapshot)
 
     if (!snapshot.buildingChartData) {
         hideLoadingState();
+    }
+    if (!candleDataChanged) {
+        renderIndicators();
     }
     updateCurrentPriceLine();
 }
@@ -997,6 +1067,7 @@ void ChartWindow::renderCandles()
 
     candleSeries_->clear();
     if (candles_.isEmpty()) {
+        renderIndicators();
         return;
     }
 
@@ -1030,6 +1101,246 @@ void ChartWindow::renderCandles()
     if (!sets.isEmpty()) {
         candleSeries_->append(sets);
     }
+    renderIndicators();
+}
+
+void ChartWindow::renderIndicators()
+{
+    renderVwap();
+    renderBigTrades();
+    renderAnchoredVolumeProfile();
+}
+
+void ChartWindow::renderVwap()
+{
+    if (!vwapSeries_) {
+        return;
+    }
+
+    vwapSeries_->clear();
+    if (!showVwap_ || candles_.isEmpty() || visibleEndMs_ <= visibleStartMs_) {
+        return;
+    }
+
+    QList<QPointF> points;
+    points.reserve(std::min(static_cast<int>(candles_.size()), kMaxRenderedCandles));
+    double cumulativeVolume = 0.0;
+    double cumulativePriceVolume = 0.0;
+    const qint64 leftPad = barDurationMs();
+    for (const auto& candle : candles_) {
+        const double volume = std::max(candle.volume, 0.0);
+        if (volume <= 0.0) {
+            continue;
+        }
+        const double typicalPrice = (candle.high + candle.low + candle.close) / 3.0;
+        cumulativeVolume += volume;
+        cumulativePriceVolume += typicalPrice * volume;
+        const qint64 timeMs = candle.time.toMSecsSinceEpoch();
+        if (timeMs < visibleStartMs_ - leftPad || timeMs > visibleEndMs_) {
+            continue;
+        }
+        points.append(QPointF(static_cast<qreal>(timeMs), cumulativePriceVolume / cumulativeVolume));
+    }
+
+    if (!points.isEmpty()) {
+        vwapSeries_->replace(points);
+    }
+}
+
+void ChartWindow::renderBigTrades()
+{
+    if (!bigTradeBuySeries_ || !bigTradeSellSeries_) {
+        return;
+    }
+
+    bigTradeBuySeries_->clear();
+    bigTradeSellSeries_->clear();
+    if (!showBigTrades_ || bigTrades_.isEmpty() || candles_.isEmpty() || visibleEndMs_ <= visibleStartMs_) {
+        return;
+    }
+
+    QList<QPointF> buyPoints;
+    QList<QPointF> sellPoints;
+    buyPoints.reserve(bigTrades_.size());
+    sellPoints.reserve(bigTrades_.size());
+    const qint64 timePadding = barDurationMs();
+    for (const auto& trade : bigTrades_) {
+        qint64 timeMs = trade.time.isValid() ? trade.time.toMSecsSinceEpoch() : 0;
+        double price = trade.price;
+        if (timeMs <= 0 && trade.candleIndex >= 0 && trade.candleIndex < candles_.size()) {
+            timeMs = candles_.at(trade.candleIndex).time.toMSecsSinceEpoch();
+            if (price <= 0.0) {
+                price = candles_.at(trade.candleIndex).close;
+            }
+        }
+        if (timeMs < visibleStartMs_ - timePadding || timeMs > visibleEndMs_ + timePadding || price <= 0.0) {
+            continue;
+        }
+        if (price < visiblePriceMin_ || price > visiblePriceMax_) {
+            continue;
+        }
+        auto& target = trade.side == AggressorSide::Sell ? sellPoints : buyPoints;
+        target.append(QPointF(static_cast<qreal>(timeMs), price));
+    }
+
+    if (!buyPoints.isEmpty()) {
+        bigTradeBuySeries_->append(buyPoints);
+    }
+    if (!sellPoints.isEmpty()) {
+        bigTradeSellSeries_->append(sellPoints);
+    }
+}
+
+void ChartWindow::renderAnchoredVolumeProfile()
+{
+    clearVolumeProfileOverlay();
+    if (!chart_ || candles_.isEmpty() || profileAnchorStartIndex_ < 0 || profileAnchorEndIndex_ < 0 || visibleEndMs_ <= visibleStartMs_ || visiblePriceMax_ <= visiblePriceMin_) {
+        return;
+    }
+
+    const int lastCandleIndex = static_cast<int>(candles_.size()) - 1;
+    int startIndex = std::clamp(profileAnchorStartIndex_, 0, lastCandleIndex);
+    int endIndex = std::clamp(profileAnchorEndIndex_, 0, lastCandleIndex);
+    if (startIndex > endIndex) {
+        std::swap(startIndex, endIndex);
+    }
+
+    const qint64 startMs = candles_.at(startIndex).time.toMSecsSinceEpoch();
+    const qint64 endMs = candles_.at(endIndex).time.toMSecsSinceEpoch() + barDurationMs();
+    if (endMs < visibleStartMs_ || startMs > visibleEndMs_) {
+        return;
+    }
+
+    const QRectF plot = chart_->plotArea();
+    if (plot.isEmpty()) {
+        return;
+    }
+
+    double selectionLeft = std::clamp(timeToPlotX(startMs), plot.left(), plot.right());
+    double selectionRight = std::clamp(timeToPlotX(endMs), plot.left(), plot.right());
+    if (selectionRight <= selectionLeft) {
+        selectionRight = std::min(plot.right(), selectionLeft + 6.0);
+    }
+    const double selectionWidth = std::max(selectionRight - selectionLeft, 6.0);
+
+    double low = std::numeric_limits<double>::max();
+    double high = std::numeric_limits<double>::lowest();
+    for (int i = startIndex; i <= endIndex; ++i) {
+        low = std::min(low, candles_.at(i).low);
+        high = std::max(high, candles_.at(i).high);
+    }
+    if (low == std::numeric_limits<double>::max() || high == std::numeric_limits<double>::lowest()) {
+        return;
+    }
+    if (high <= low) {
+        const double padding = std::max(std::abs(high) * 0.0001, 0.25);
+        low -= padding;
+        high += padding;
+    }
+
+    const int candleCount = endIndex - startIndex + 1;
+    const int binCount = std::clamp(candleCount * 2, 16, 80);
+    const double binSize = (high - low) / binCount;
+    if (binSize <= 0.0) {
+        return;
+    }
+
+    QVector<double> volumes(binCount);
+    QVector<double> deltas(binCount);
+    for (int i = startIndex; i <= endIndex; ++i) {
+        const auto& candle = candles_.at(i);
+        const int firstBin = std::clamp(static_cast<int>(std::floor((candle.low - low) / binSize)), 0, binCount - 1);
+        const int lastBin = std::clamp(static_cast<int>(std::floor((candle.high - low) / binSize)), 0, binCount - 1);
+        const int span = std::max(lastBin - firstBin + 1, 1);
+        const double volumeShare = std::max(candle.volume, 0.0) / span;
+        const double deltaShare = candle.delta / span;
+        for (int bin = firstBin; bin <= lastBin; ++bin) {
+            volumes[bin] += volumeShare;
+            deltas[bin] += deltaShare;
+        }
+    }
+
+    double maxVolume = 0.0;
+    int pocIndex = 0;
+    for (int bin = 0; bin < binCount; ++bin) {
+        if (volumes.at(bin) > maxVolume) {
+            maxVolume = volumes.at(bin);
+            pocIndex = bin;
+        }
+    }
+    if (maxVolume <= 0.0) {
+        return;
+    }
+
+    volumeProfileOverlay_ = new QGraphicsItemGroup(chart_);
+    volumeProfileOverlay_->setZValue(8.0);
+
+    QColor selectionFill("#f0c567");
+    selectionFill.setAlpha(22);
+    QPen selectionPen(QColor(240, 197, 103, 130));
+    selectionPen.setWidthF(1.0);
+    selectionPen.setStyle(Qt::DashLine);
+    auto* selectionRect = new QGraphicsRectItem(QRectF(selectionLeft, plot.top(), selectionWidth, plot.height()), volumeProfileOverlay_);
+    selectionRect->setBrush(selectionFill);
+    selectionRect->setPen(selectionPen);
+
+    const double baseX = selectionLeft + 4.0;
+    const double maxBarWidth = std::max(selectionWidth - 8.0, 3.0);
+    for (int bin = 0; bin < binCount; ++bin) {
+        if (volumes.at(bin) <= 0.0) {
+            continue;
+        }
+        const double binLow = low + bin * binSize;
+        const double binHigh = binLow + binSize;
+        double yTop = priceToPlotY(binHigh);
+        double yBottom = priceToPlotY(binLow);
+        if (yBottom < plot.top() || yTop > plot.bottom()) {
+            continue;
+        }
+        yTop = std::clamp(yTop, plot.top(), plot.bottom());
+        yBottom = std::clamp(yBottom, plot.top(), plot.bottom());
+        const double height = std::max(yBottom - yTop - 0.8, 1.0);
+        const double width = std::max((volumes.at(bin) / maxVolume) * maxBarWidth, 1.0);
+        QColor fill = bin == pocIndex ? QColor("#f0c567") : deltas.at(bin) >= 0.0 ? QColor("#00ff3b") : QColor("#8b25ff");
+        fill.setAlpha(bin == pocIndex ? 150 : 78);
+        auto* bar = new QGraphicsRectItem(QRectF(baseX, yTop, width, height), volumeProfileOverlay_);
+        bar->setBrush(fill);
+        bar->setPen(QPen(Qt::NoPen));
+    }
+
+    const double pocPrice = low + (pocIndex + 0.5) * binSize;
+    const double pocY = priceToPlotY(pocPrice);
+    if (pocY >= plot.top() && pocY <= plot.bottom()) {
+        QPen pocPen(QColor(240, 197, 103, 170));
+        pocPen.setWidthF(1.0);
+        auto* pocLine = new QGraphicsLineItem(selectionLeft, pocY, selectionRight, pocY, volumeProfileOverlay_);
+        pocLine->setPen(pocPen);
+    }
+
+    const auto addHandle = [this, plot](int candleIndex, double price) {
+        if (candleIndex < 0 || candleIndex >= candles_.size()) {
+            return;
+        }
+        const double x = timeToPlotX(candles_.at(candleIndex).time.toMSecsSinceEpoch());
+        const double y = priceToPlotY(price);
+        if (x < plot.left() || x > plot.right() || y < plot.top() || y > plot.bottom()) {
+            return;
+        }
+        auto* handle = new QGraphicsEllipseItem(QRectF(x - 4.0, y - 4.0, 8.0, 8.0), volumeProfileOverlay_);
+        handle->setBrush(QColor("#f0c567"));
+        handle->setPen(QPen(QColor("#06080c"), 1.0));
+    };
+    addHandle(profileAnchorStartIndex_, profileAnchorStartPrice_);
+    addHandle(profileAnchorEndIndex_, profileAnchorEndPrice_);
+}
+
+void ChartWindow::clearVolumeProfileOverlay()
+{
+    if (!volumeProfileOverlay_) {
+        return;
+    }
+    delete volumeProfileOverlay_;
+    volumeProfileOverlay_ = nullptr;
 }
 
 void ChartWindow::updateVisibleRanges(bool preserveUserView)
@@ -1148,6 +1459,7 @@ void ChartWindow::setPriceRange(double minPrice, double maxPrice)
     visiblePriceMax_ = maxPrice;
     axisY_->setRange(minPrice, maxPrice);
     updateCurrentPriceLine();
+    renderIndicators();
 }
 
 void ChartWindow::panTimeRange(qint64 shiftMs)
@@ -1278,6 +1590,36 @@ void ChartWindow::applyChartVisualSettings()
     }
 }
 
+void ChartWindow::setActiveTool(ChartTool tool)
+{
+    activeTool_ = tool;
+    drawingVolumeProfile_ = false;
+    if (pointerToolButton_) {
+        pointerToolButton_->setChecked(tool == ChartTool::Pointer);
+    }
+    if (rectangleToolButton_) {
+        rectangleToolButton_->setChecked(tool == ChartTool::Rectangle);
+    }
+    if (volumeProfileToolButton_) {
+        volumeProfileToolButton_->setChecked(tool == ChartTool::VolumeProfile);
+    }
+    if (chartView_) {
+        chartView_->setCursor(Qt::CrossCursor);
+    }
+}
+
+void ChartWindow::toggleIndicator(const QString& name)
+{
+    if (name.compare("VWAP", Qt::CaseInsensitive) == 0) {
+        showVwap_ = !showVwap_;
+    } else if (name.compare("Big Trades", Qt::CaseInsensitive) == 0) {
+        showBigTrades_ = !showBigTrades_;
+    } else if (name.compare("Volume Profile", Qt::CaseInsensitive) == 0) {
+        setActiveTool(ChartTool::VolumeProfile);
+    }
+    renderIndicators();
+}
+
 void ChartWindow::handleChartWheel(QWheelEvent* event)
 {
     if (!chartView_ || !chart_ || candles_.isEmpty()) {
@@ -1330,10 +1672,138 @@ void ChartWindow::handleChartWheel(QWheelEvent* event)
     event->accept();
 }
 
+bool ChartWindow::isInsidePlot(const QPointF& pos) const
+{
+    return chart_ && chart_->plotArea().contains(pos);
+}
+
+qint64 ChartWindow::timeAtPosition(const QPointF& pos) const
+{
+    if (!chart_ || visibleEndMs_ <= visibleStartMs_) {
+        return visibleStartMs_;
+    }
+    const QRectF plot = chart_->plotArea();
+    if (plot.width() <= 0.0) {
+        return visibleStartMs_;
+    }
+    const double ratio = std::clamp((pos.x() - plot.left()) / plot.width(), 0.0, 1.0);
+    return visibleStartMs_ + static_cast<qint64>((visibleEndMs_ - visibleStartMs_) * ratio);
+}
+
+double ChartWindow::priceAtPosition(const QPointF& pos) const
+{
+    if (!chart_ || visiblePriceMax_ <= visiblePriceMin_) {
+        return visiblePriceMin_;
+    }
+    const QRectF plot = chart_->plotArea();
+    if (plot.height() <= 0.0) {
+        return visiblePriceMin_;
+    }
+    const double ratio = std::clamp((pos.y() - plot.top()) / plot.height(), 0.0, 1.0);
+    return visiblePriceMax_ - (visiblePriceMax_ - visiblePriceMin_) * ratio;
+}
+
+double ChartWindow::timeToPlotX(qint64 timeMs) const
+{
+    if (!chart_ || visibleEndMs_ <= visibleStartMs_) {
+        return 0.0;
+    }
+    const QRectF plot = chart_->plotArea();
+    const double ratio = static_cast<double>(timeMs - visibleStartMs_) / static_cast<double>(visibleEndMs_ - visibleStartMs_);
+    return plot.left() + ratio * plot.width();
+}
+
+double ChartWindow::priceToPlotY(double price) const
+{
+    if (!chart_ || visiblePriceMax_ <= visiblePriceMin_) {
+        return 0.0;
+    }
+    const QRectF plot = chart_->plotArea();
+    const double ratio = (visiblePriceMax_ - price) / (visiblePriceMax_ - visiblePriceMin_);
+    return plot.top() + ratio * plot.height();
+}
+
+int ChartWindow::nearestCandleIndexAt(const QPointF& pos) const
+{
+    if (candles_.isEmpty()) {
+        return -1;
+    }
+
+    const qint64 targetMs = timeAtPosition(pos);
+    auto it = std::lower_bound(candles_.begin(), candles_.end(), targetMs, [](const Candle& candle, qint64 time) {
+        return candle.time.toMSecsSinceEpoch() < time;
+    });
+    if (it == candles_.begin()) {
+        return 0;
+    }
+    if (it == candles_.end()) {
+        return candles_.size() - 1;
+    }
+
+    const int rightIndex = static_cast<int>(std::distance(candles_.begin(), it));
+    const int leftIndex = rightIndex - 1;
+    const qint64 leftTime = candles_.at(leftIndex).time.toMSecsSinceEpoch();
+    const qint64 rightTime = candles_.at(rightIndex).time.toMSecsSinceEpoch();
+    const qint64 leftDistance = targetMs >= leftTime ? targetMs - leftTime : leftTime - targetMs;
+    const qint64 rightDistance = rightTime >= targetMs ? rightTime - targetMs : targetMs - rightTime;
+    return leftDistance <= rightDistance ? leftIndex : rightIndex;
+}
+
+double ChartWindow::magneticPriceAt(int candleIndex, const QPointF& pos) const
+{
+    if (candleIndex < 0 || candleIndex >= candles_.size()) {
+        return priceAtPosition(pos);
+    }
+    const auto& candle = candles_.at(candleIndex);
+    const double clickedPrice = priceAtPosition(pos);
+    return std::clamp(clickedPrice, candle.low, candle.high);
+}
+
+void ChartWindow::beginVolumeProfileAnchor(const QPointF& pos)
+{
+    const int candleIndex = nearestCandleIndexAt(pos);
+    if (candleIndex < 0) {
+        return;
+    }
+
+    profileAnchorStartIndex_ = candleIndex;
+    profileAnchorEndIndex_ = candleIndex;
+    profileAnchorStartPrice_ = magneticPriceAt(candleIndex, pos);
+    profileAnchorEndPrice_ = profileAnchorStartPrice_;
+    drawingVolumeProfile_ = true;
+    renderAnchoredVolumeProfile();
+}
+
+void ChartWindow::updateVolumeProfileAnchor(const QPointF& pos)
+{
+    if (!drawingVolumeProfile_) {
+        return;
+    }
+    const int candleIndex = nearestCandleIndexAt(pos);
+    if (candleIndex < 0) {
+        return;
+    }
+    profileAnchorEndIndex_ = candleIndex;
+    profileAnchorEndPrice_ = magneticPriceAt(candleIndex, pos);
+    renderAnchoredVolumeProfile();
+}
+
+void ChartWindow::finishVolumeProfileAnchor()
+{
+    drawingVolumeProfile_ = false;
+    renderAnchoredVolumeProfile();
+}
+
 void ChartWindow::handleChartMousePress(QMouseEvent* event)
 {
     if (event->button() != Qt::LeftButton) {
         event->ignore();
+        return;
+    }
+
+    if (activeTool_ == ChartTool::VolumeProfile && isInsidePlot(event->position())) {
+        beginVolumeProfileAnchor(event->position());
+        event->accept();
         return;
     }
 
@@ -1349,6 +1819,12 @@ void ChartWindow::handleChartMousePress(QMouseEvent* event)
 
 void ChartWindow::handleChartMouseMove(QMouseEvent* event)
 {
+    if (drawingVolumeProfile_) {
+        updateVolumeProfileAnchor(event->position());
+        event->accept();
+        return;
+    }
+
     if (!chart_ || candles_.isEmpty() || (!draggingChart_ && !draggingPriceScale_)) {
         event->accept();
         return;
@@ -1381,6 +1857,13 @@ void ChartWindow::handleChartMouseMove(QMouseEvent* event)
 
 void ChartWindow::handleChartMouseRelease(QMouseEvent* event)
 {
+    if (drawingVolumeProfile_) {
+        updateVolumeProfileAnchor(event->position());
+        finishVolumeProfileAnchor();
+        event->accept();
+        return;
+    }
+
     draggingChart_ = false;
     draggingPriceScale_ = false;
     event->accept();
@@ -1562,6 +2045,11 @@ void ChartWindow::applyLocalStyle()
         QToolButton#chartIconButton:pressed {
             background: #111720;
             border-color: #56657a;
+        }
+        QToolButton#chartIconButton:checked {
+            background: #243247;
+            border-color: #f0c567;
+            color: #f0c567;
         }
         QComboBox#chartCombo {
             background: #171c25;

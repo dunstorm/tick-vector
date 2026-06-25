@@ -23,6 +23,10 @@ constexpr int kCachePersistThrottleSeconds = 30;
 constexpr int kMaxProfileBins = 220;
 constexpr int kBackfillEmitEveryBars = 25;
 constexpr int kGapBackfillOverlapBars = 5;
+constexpr qint64 kBigTradeAggregateMs = 100;
+constexpr qint64 kBigTradeBucketRetentionMs = 30 * 1000;
+constexpr int kBigTradeLotsThreshold = 75;
+constexpr int kMaxBigTrades = 400;
 
 QStringList splitQualifiedSymbol(const QString& symbol)
 {
@@ -45,6 +49,17 @@ QString sideText(AggressorSide side)
         return "SELL";
     }
     return "TRADE";
+}
+
+QString sideKey(AggressorSide side)
+{
+    if (side == AggressorSide::Buy) {
+        return "B";
+    }
+    if (side == AggressorSide::Sell) {
+        return "S";
+    }
+    return "U";
 }
 
 bool looksLikeDatedContract(const QString& symbol)
@@ -288,6 +303,7 @@ void RithmicMarketDataAdapter::subscribe(const QString& symbol)
     snapshot_.chartDataLabel.clear();
     backfillLoadedDates_.clear();
     backfillTicksLoaded_ = 0;
+    bigTradeBuckets_.clear();
     lastCachePersistedAt_ = {};
     candleCacheDirty_ = false;
     chartBackfillComplete_ = false;
@@ -331,6 +347,7 @@ bool RithmicMarketDataAdapter::requestChartData(const ChartDataRequest& request)
     chartDataRequested_ = true;
     if (chartShapeChanged || !normalized.allowCached) {
         snapshot_.candles.clear();
+        snapshot_.bigTrades.clear();
         snapshot_.volumeProfile.clear();
         snapshot_.chartBarsLoaded = 0;
         snapshot_.chartBarsExpected = normalized.lookbackDays * 24 * 60 / normalized.barMinutes;
@@ -342,6 +359,7 @@ bool RithmicMarketDataAdapter::requestChartData(const ChartDataRequest& request)
         lastCachePersistedAt_ = {};
         backfillLoadedDates_.clear();
         backfillTicksLoaded_ = 0;
+        bigTradeBuckets_.clear();
     }
 
     if (!protocol_ || !connectionStarted_ || !protocol_->isConnected() || resolvingFrontMonth_) {
@@ -455,6 +473,7 @@ void RithmicMarketDataAdapter::handleTrade(const RithmicTradeTick& trade)
     }
 
     upsertCandle(trade);
+    updateBigTradesFromTrade(trade);
     updateProfileFromTrade(trade);
     emitSnapshot();
 }
@@ -873,6 +892,94 @@ void RithmicMarketDataAdapter::upsertCandle(const RithmicTradeTick& trade)
 
     rememberCandleCache();
     persistCandleCache(false);
+}
+
+void RithmicMarketDataAdapter::updateBigTradesFromTrade(const RithmicTradeTick& trade)
+{
+    if (!isFinitePositive(trade.price) || trade.size <= 0) {
+        return;
+    }
+
+    const QDateTime tradeTime = trade.time.isValid() ? trade.time.toUTC() : QDateTime::currentDateTimeUtc();
+    const qint64 tradeMs = tradeTime.toMSecsSinceEpoch();
+    const qint64 bucketMs = tradeMs - tradeMs % kBigTradeAggregateMs;
+    pruneBigTradeState(bucketMs);
+
+    const QString bucketExchange = trade.exchange.isEmpty() ? pendingExchange_ : trade.exchange;
+    const QString bucketSymbol = trade.symbol.isEmpty() ? pendingSymbol_ : trade.symbol;
+    const double tick = tickSizeForSymbol(bucketExchange, bucketSymbol);
+    const double price = roundToTick(trade.price, tick);
+    const QString key = bucketExchange.trimmed().toUpper() + ":" + bucketSymbol.trimmed().toUpper()
+        + ":" + QString::number(bucketMs)
+        + ":" + QString::number(std::llround(price / std::max(tick, 0.000001)))
+        + ":" + sideKey(trade.aggressor);
+
+    auto& bucket = bigTradeBuckets_[key];
+    if (bucket.lots == 0) {
+        bucket.bucketMs = bucketMs;
+        bucket.price = price;
+        bucket.side = trade.aggressor;
+    }
+    bucket.lots += trade.size;
+
+    if (bucket.lots < kBigTradeLotsThreshold) {
+        return;
+    }
+
+    const int candleIndex = candleIndexForTime(bucketMs);
+    if (candleIndex < 0) {
+        return;
+    }
+
+    const QDateTime bucketTime = QDateTime::fromMSecsSinceEpoch(bucketMs, QTimeZone::UTC);
+    for (auto& existing : snapshot_.bigTrades) {
+        if (existing.time.isValid()
+            && existing.time.toMSecsSinceEpoch() == bucketMs
+            && std::abs(existing.price - bucket.price) < tick * 0.25
+            && existing.side == bucket.side) {
+            existing.candleIndex = candleIndex;
+            existing.lots = bucket.lots;
+            return;
+        }
+    }
+
+    snapshot_.bigTrades.push_back({candleIndex, bucket.price, bucket.lots, bucket.side, bucketTime});
+    while (snapshot_.bigTrades.size() > kMaxBigTrades) {
+        snapshot_.bigTrades.removeFirst();
+    }
+}
+
+void RithmicMarketDataAdapter::pruneBigTradeState(qint64 latestBucketMs)
+{
+    QVector<QString> staleKeys;
+    staleKeys.reserve(bigTradeBuckets_.size());
+    const qint64 cutoffMs = latestBucketMs - kBigTradeBucketRetentionMs;
+    for (auto it = bigTradeBuckets_.cbegin(); it != bigTradeBuckets_.cend(); ++it) {
+        if (it.value().bucketMs < cutoffMs) {
+            staleKeys.push_back(it.key());
+        }
+    }
+    for (const auto& key : staleKeys) {
+        bigTradeBuckets_.remove(key);
+    }
+}
+
+int RithmicMarketDataAdapter::candleIndexForTime(qint64 timeMs) const
+{
+    if (snapshot_.candles.isEmpty()) {
+        return -1;
+    }
+
+    const qint64 seconds = timeMs / 1000;
+    const qint64 candleSeconds = std::max<qint64>(activeBarMinutes(), 1) * 60;
+    const qint64 bucketSeconds = seconds - seconds % candleSeconds;
+    auto it = std::lower_bound(snapshot_.candles.begin(), snapshot_.candles.end(), bucketSeconds, [](const Candle& candle, qint64 time) {
+        return candle.time.toSecsSinceEpoch() < time;
+    });
+    if (it == snapshot_.candles.end() || it->time.toSecsSinceEpoch() != bucketSeconds) {
+        return -1;
+    }
+    return static_cast<int>(std::distance(snapshot_.candles.begin(), it));
 }
 
 void RithmicMarketDataAdapter::updateProfileFromTrade(const RithmicTradeTick& trade)

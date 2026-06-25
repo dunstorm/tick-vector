@@ -5,6 +5,7 @@
     <file alias="settings.svg">assets/icons/settings.svg</file>
     <file alias="tool-arrow.svg">assets/icons/tool-arrow.svg</file>
     <file alias="tool-rectangle.svg">assets/icons/tool-rectangle.svg</file>
+    <file alias="tool-volume-profile.svg">assets/icons/tool-volume-profile.svg</file>
   </qresource>
   <qresource prefix="/certificates">
     <file alias="rithmic_ssl_cert_auth_params">../third_party/rithmic-protocol/certificates/rithmic_ssl_cert_auth_params</file>

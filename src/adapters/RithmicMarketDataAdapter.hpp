@@ -38,6 +38,13 @@ private:
         bool hasContext{};
     };
 
+    struct BigTradeBucket {
+        qint64 bucketMs{};
+        double price{};
+        int lots{};
+        AggressorSide side{AggressorSide::Unknown};
+    };
+
     void handleStatus(const QString& message);
     void handleError(const QString& message);
     void handleConnected();
@@ -58,6 +65,9 @@ private:
     int activeBarMinutes() const;
     void mergeCandle(const Candle& candle);
     void upsertCandle(const RithmicTradeTick& trade);
+    void updateBigTradesFromTrade(const RithmicTradeTick& trade);
+    void pruneBigTradeState(qint64 latestBucketMs);
+    int candleIndexForTime(qint64 timeMs) const;
     void updateProfileFromTrade(const RithmicTradeTick& trade);
     void updateProfileFromCandle(const Candle& candle);
     void recomputeProfileFlags();
@@ -71,6 +81,7 @@ private:
     QString requestedRootSymbol_;
     QHash<QString, QVector<Candle>> candleCache_;
     QHash<QString, QDateTime> candleCacheRefreshedAt_;
+    QHash<QString, BigTradeBucket> bigTradeBuckets_;
     ChartDataCache chartDataCache_;
     QSet<QDate> backfillLoadedDates_;
     qint64 backfillTicksLoaded_{0};

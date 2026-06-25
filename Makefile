@@ -1,8 +1,10 @@
 BUILD_DIR ?= build
 GENERATOR ?= Ninja
+CHART ?= CME:NQ
+CONNECTION ?=
 BIN_PATH := $(BUILD_DIR)/tick-vector
 
-.PHONY: configure build check architecture run screenshot screenshot-feed-settings screenshot-connection-test screenshot-instrument screenshot-chart screenshot-dom reset-credentials reset-keychain clean
+.PHONY: configure build check architecture run chart screenshot screenshot-feed-settings screenshot-connection-test screenshot-instrument screenshot-chart screenshot-dom reset-chart-cache reset-credentials reset-keychain clean
 
 configure:
 	cmake -S . -B $(BUILD_DIR) -G "$(GENERATOR)"
@@ -17,6 +19,9 @@ architecture:
 
 run: build
 	@"$(BIN_PATH)"
+
+chart: build
+	@"$(BIN_PATH)" --dev-chart "$(CHART)" $(if $(CONNECTION),--connection "$(CONNECTION)",)
 
 screenshot: build
 	@QT_QPA_PLATFORM=offscreen "$(BIN_PATH)" --screenshot /tmp/tick-vector.png
@@ -46,6 +51,11 @@ reset-credentials:
 	@rm -f "$$HOME/Library/Application Support/Tick Vector/feed-connections.json"
 	@rm -f "$$HOME/Library/Application Support/Tick Vector/rithmic-profile.json"
 	@echo "Removed plaintext Tick Vector credential profiles if they existed."
+
+reset-chart-cache:
+	@rm -rf "$$HOME/Library/Application Support/Tick Vector/chart-cache"
+	@rm -rf "$$HOME/.tick-vector/chart-cache"
+	@echo "Removed Tick Vector chart cache directories if they existed."
 
 reset-keychain:
 	-@security delete-generic-password -s com.tickvector.desktop.feed-connections -a profiles-v1 >/dev/null 2>&1 || true

@@ -20,7 +20,7 @@ namespace tc {
 
 namespace {
 
-constexpr int kCacheVersion = 1;
+constexpr int kCacheVersion = 2;
 constexpr auto kCacheDirectoryName = "chart-cache";
 
 QString normalizedText(const QString& value)

@@ -15,12 +15,21 @@ make architecture
 make build
 make check
 make run
+make chart CHART=CME:NQ
 make screenshot
 make screenshot-chart
 make screenshot-dom
 ```
 
 `make architecture` checks source dependency boundaries. `make build` configures and builds `build/tick-vector`. `make check` runs architecture checks and then builds. Screenshot targets run the app with `QT_QPA_PLATFORM=offscreen` and write PNGs to `/tmp`.
+
+`make chart` opens a price chart directly. It uses the first complete saved feed connection, preferring one marked connect-on-startup, and falls back to the simulator when no saved connection is usable. Use `CHART=COMEX:GC` to change the instrument or `CONNECTION="Rithmic"` to choose a saved connection by name or id.
+
+If chart-cache state needs to be cleared during development:
+
+```bash
+make reset-chart-cache
+```
 
 The equivalent CMake preset flow is:
 

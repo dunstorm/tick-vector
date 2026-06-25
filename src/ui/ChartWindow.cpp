@@ -5,6 +5,7 @@
 #include <QtCharts/QChart>
 #include <QtCharts/QChartView>
 #include <QtCharts/QDateTimeAxis>
+#include <QtCharts/QLineSeries>
 #include <QtCharts/QValueAxis>
 #include <QtCore/QMetaObject>
 #include <QtCore/QSettings>
@@ -45,8 +46,9 @@ namespace tc {
 namespace {
 
 constexpr int kHistoryLookbackDays = 10;
-constexpr int kHistoryBarMinutes = 2;
+constexpr int kHistoryBarMinutes = 1;
 constexpr int kMaxRenderedCandles = 1400;
+constexpr int kRightOffsetBars = 24;
 constexpr qint64 kDayMs = 24LL * 60 * 60 * 1000;
 
 struct TimeframeOption {
@@ -721,38 +723,34 @@ QWidget* ChartWindow::createCandlestickChart()
     chart_->addAxis(axisY_, Qt::AlignRight);
     candleSeries_->attachAxis(axisY_);
 
+    currentPriceLine_ = new QLineSeries;
+    currentPriceLine_->setName("Current price");
+    QPen priceLinePen(QColor("#00ff3b"));
+    priceLinePen.setWidthF(1.1);
+    priceLinePen.setStyle(Qt::DashLine);
+    currentPriceLine_->setPen(priceLinePen);
+    chart_->addSeries(currentPriceLine_);
+    currentPriceLine_->attachAxis(axisX_);
+    currentPriceLine_->attachAxis(axisY_);
+
     auto* view = new InteractiveChartView(chart_, panel);
     chartView_ = view;
     view->setObjectName("candlestickChartView");
     view->setRenderHint(QPainter::Antialiasing, true);
     view->setRubberBand(QChartView::NoRubberBand);
     view->setCursor(Qt::CrossCursor);
+    currentPriceLabel_ = new QLabel(view);
+    currentPriceLabel_->setObjectName("currentPriceLabel");
+    currentPriceLabel_->setAlignment(Qt::AlignCenter);
+    currentPriceLabel_->setFixedSize(76, 20);
+    currentPriceLabel_->hide();
     view->wheelHandler = [this](QWheelEvent* event) { handleChartWheel(event); };
     view->pressHandler = [this](QMouseEvent* event) { handleChartMousePress(event); };
     view->moveHandler = [this](QMouseEvent* event) { handleChartMouseMove(event); };
     view->releaseHandler = [this](QMouseEvent* event) { handleChartMouseRelease(event); };
     view->doubleClickHandler = [this](QMouseEvent* event) { handleChartDoubleClick(event); };
-    auto* timeAxis = new QFrame(panel);
-    timeAxis->setObjectName("timeAxisStrip");
-    timeAxis->setFixedHeight(20);
-    auto* timeAxisLayout = new QHBoxLayout(timeAxis);
-    timeAxisLayout->setContentsMargins(0, 0, 0, 0);
-    timeAxisLayout->setSpacing(8);
-    timeAxisStart_ = new QLabel(timeAxis);
-    timeAxisStart_->setObjectName("timeAxisLabel");
-    timeAxisStart_->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    timeAxisMid_ = new QLabel(timeAxis);
-    timeAxisMid_->setObjectName("timeAxisLabel");
-    timeAxisMid_->setAlignment(Qt::AlignCenter);
-    timeAxisEnd_ = new QLabel(timeAxis);
-    timeAxisEnd_->setObjectName("timeAxisLabel");
-    timeAxisEnd_->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
-    timeAxisLayout->addWidget(timeAxisStart_, 1);
-    timeAxisLayout->addWidget(timeAxisMid_, 1);
-    timeAxisLayout->addWidget(timeAxisEnd_, 1);
     layout->addWidget(loadingPanel_);
     layout->addWidget(view, 1);
-    layout->addWidget(timeAxis);
     return panel;
 }
 
@@ -827,7 +825,7 @@ void ChartWindow::handleTimeframeChanged(int index)
     selectedBarMinutes_ = minutes;
     userTimeRange_ = false;
     userPriceRange_ = false;
-    wasPinnedRight_ = true;
+    followRightEdge_ = true;
     candles_.clear();
     renderedCandleFingerprint_ = 0;
     if (candleSeries_) {
@@ -879,6 +877,7 @@ void ChartWindow::renderSnapshot(const MarketSnapshot& snapshot)
     });
     const quint64 fingerprint = candleFingerprint(candles_);
     const bool candleDataChanged = fingerprint != renderedCandleFingerprint_;
+    currentPrice_ = !candles_.isEmpty() ? candles_.last().close : snapshot.last;
     if (!snapshot.symbol.trimmed().isEmpty()) {
         updateHeaderTitles(snapshot.symbol);
     }
@@ -913,15 +912,15 @@ void ChartWindow::renderSnapshot(const MarketSnapshot& snapshot)
         return;
     }
 
-    wasPinnedRight_ = isFollowingRightEdge(previousEnd);
     if (candleDataChanged) {
-        updateVisibleRanges(userTimeRange_ && !wasPinnedRight_);
+        updateVisibleRanges(!followRightEdge_ && visibleStartMs_ < visibleEndMs_);
         renderedCandleFingerprint_ = fingerprint;
     }
 
     if (!snapshot.buildingChartData) {
         hideLoadingState();
     }
+    updateCurrentPriceLine();
 }
 
 void ChartWindow::showLoadingState(const MarketSnapshot& snapshot)
@@ -1041,21 +1040,16 @@ void ChartWindow::updateVisibleRanges(bool preserveUserView)
         return;
     }
 
-    const qint64 firstMs = candles_.first().time.toMSecsSinceEpoch();
     const qint64 lastMs = candles_.last().time.toMSecsSinceEpoch();
     const qint64 rightEdgeMs = rightEdgeForLastCandle(lastMs);
     if (!preserveUserView || visibleStartMs_ >= visibleEndMs_) {
         const int visibleBars = std::min(static_cast<int>(candles_.size()), 120);
         const qint64 startMs = candles_.at(candles_.size() - visibleBars).time.toMSecsSinceEpoch();
         setTimeRange(startMs, rightEdgeMs);
+        followRightEdge_ = true;
         userTimeRange_ = false;
     } else {
-        const qint64 range = std::max<qint64>(visibleEndMs_ - visibleStartMs_, minVisibleRangeMs());
-        if (wasPinnedRight_) {
-            setTimeRange(rightEdgeMs - range, rightEdgeMs);
-        } else {
-            setTimeRange(std::max(firstMs, visibleStartMs_), std::min(rightEdgeMs, visibleEndMs_));
-        }
+        setTimeRange(visibleStartMs_, visibleEndMs_);
     }
 
     if (!userPriceRange_) {
@@ -1138,8 +1132,8 @@ void ChartWindow::setTimeRange(qint64 startMs, qint64 endMs)
     visibleStartMs_ = startMs;
     visibleEndMs_ = endMs;
     axisX_->setRange(QDateTime::fromMSecsSinceEpoch(visibleStartMs_, QTimeZone::UTC), QDateTime::fromMSecsSinceEpoch(visibleEndMs_, QTimeZone::UTC));
-    updateTimeAxisLabels();
     renderCandles();
+    updateCurrentPriceLine();
 }
 
 void ChartWindow::setPriceRange(double minPrice, double maxPrice)
@@ -1153,11 +1147,83 @@ void ChartWindow::setPriceRange(double minPrice, double maxPrice)
     visiblePriceMin_ = minPrice;
     visiblePriceMax_ = maxPrice;
     axisY_->setRange(minPrice, maxPrice);
+    updateCurrentPriceLine();
+}
+
+void ChartWindow::panTimeRange(qint64 shiftMs)
+{
+    setTimeRange(visibleStartMs_ + shiftMs, visibleEndMs_ + shiftMs);
+}
+
+void ChartWindow::zoomTimeRangeAt(double cursorRatio, double factor)
+{
+    if (visibleEndMs_ <= visibleStartMs_) {
+        return;
+    }
+
+    cursorRatio = std::clamp(cursorRatio, 0.0, 1.0);
+    const qint64 currentRange = std::max<qint64>(visibleEndMs_ - visibleStartMs_, minVisibleRangeMs());
+    const qint64 nextRange = std::clamp<qint64>(static_cast<qint64>(currentRange * factor), minVisibleRangeMs(), maxVisibleRangeMs());
+    const qint64 anchor = visibleStartMs_ + static_cast<qint64>(currentRange * cursorRatio);
+    const qint64 start = anchor - static_cast<qint64>(nextRange * cursorRatio);
+    setTimeRange(start, start + nextRange);
+}
+
+void ChartWindow::zoomPriceRangeAt(double cursorRatio, double factor)
+{
+    cursorRatio = std::clamp(cursorRatio, 0.0, 1.0);
+    const double currentRange = std::max(visiblePriceMax_ - visiblePriceMin_, 0.01);
+    const double nextRange = std::max(currentRange * factor, 0.01);
+    const double anchor = visiblePriceMax_ - currentRange * cursorRatio;
+    const double maxPrice = anchor + nextRange * cursorRatio;
+    setPriceRange(maxPrice - nextRange, maxPrice);
+}
+
+void ChartWindow::updateCurrentPriceLine()
+{
+    if (!currentPriceLine_ || visibleEndMs_ <= visibleStartMs_ || currentPrice_ <= 0.0) {
+        if (currentPriceLabel_) {
+            currentPriceLabel_->hide();
+        }
+        return;
+    }
+
+    currentPriceLine_->replace({
+        QPointF(static_cast<qreal>(visibleStartMs_), currentPrice_),
+        QPointF(static_cast<qreal>(visibleEndMs_), currentPrice_)
+    });
+    updateCurrentPriceLabel();
+}
+
+void ChartWindow::updateCurrentPriceLabel()
+{
+    if (!chart_ || !chartView_ || !currentPriceLabel_ || currentPrice_ <= 0.0 || visiblePriceMax_ <= visiblePriceMin_) {
+        return;
+    }
+
+    const QRectF plot = chart_->plotArea();
+    if (plot.isEmpty() || currentPrice_ < visiblePriceMin_ || currentPrice_ > visiblePriceMax_) {
+        currentPriceLabel_->hide();
+        return;
+    }
+
+    const double ratio = (visiblePriceMax_ - currentPrice_) / (visiblePriceMax_ - visiblePriceMin_);
+    const int y = static_cast<int>(plot.top() + ratio * plot.height() - currentPriceLabel_->height() / 2.0);
+    const int x = std::min(chartView_->width() - currentPriceLabel_->width() - 2, static_cast<int>(plot.right()) + 3);
+    currentPriceLabel_->setText(QString::number(currentPrice_, 'f', 2));
+    currentPriceLabel_->move(std::max(0, x), std::clamp(y, 0, std::max(0, chartView_->height() - currentPriceLabel_->height())));
+    currentPriceLabel_->show();
+    currentPriceLabel_->raise();
 }
 
 qint64 ChartWindow::barDurationMs() const
 {
     return std::max<qint64>(selectedBarMinutes_, 1) * 60 * 1000;
+}
+
+qint64 ChartWindow::rightOffsetMs() const
+{
+    return barDurationMs() * kRightOffsetBars;
 }
 
 qint64 ChartWindow::minVisibleRangeMs() const
@@ -1172,18 +1238,7 @@ qint64 ChartWindow::maxVisibleRangeMs() const
 
 qint64 ChartWindow::rightEdgeForLastCandle(qint64 lastMs) const
 {
-    return lastMs + barDurationMs();
-}
-
-bool ChartWindow::isFollowingRightEdge(qint64 previousLastMs) const
-{
-    if (!userTimeRange_ || previousLastMs <= 0 || visibleEndMs_ <= visibleStartMs_) {
-        return true;
-    }
-
-    const qint64 expectedRightEdge = rightEdgeForLastCandle(previousLastMs);
-    const qint64 tolerance = std::max<qint64>(barDurationMs() / 2, 30 * 1000);
-    return std::llabs(visibleEndMs_ - expectedRightEdge) <= tolerance;
+    return lastMs + rightOffsetMs();
 }
 
 void ChartWindow::updateAxisTitles()
@@ -1199,7 +1254,6 @@ void ChartWindow::updateAxisTitles()
         axisY_->setTitleVisible(false);
         axisY_->setLabelsVisible(true);
     }
-    updateTimeAxisLabels();
 }
 
 void ChartWindow::updateHeaderTitles(const QString& symbol)
@@ -1211,26 +1265,6 @@ void ChartWindow::updateHeaderTitles(const QString& symbol)
     if (rightTitle_) {
         rightTitle_->setText(displaySymbol + "  |  " + timeframeLabel(selectedBarMinutes_));
     }
-}
-
-void ChartWindow::updateTimeAxisLabels()
-{
-    if (!timeAxisStart_ || !timeAxisMid_ || !timeAxisEnd_) {
-        return;
-    }
-
-    if (visibleEndMs_ <= visibleStartMs_) {
-        timeAxisStart_->clear();
-        timeAxisMid_->clear();
-        timeAxisEnd_->clear();
-        return;
-    }
-
-    const QString format = axisFormatForTimeframe(selectedBarMinutes_);
-    const qint64 midMs = visibleStartMs_ + (visibleEndMs_ - visibleStartMs_) / 2;
-    timeAxisStart_->setText(QDateTime::fromMSecsSinceEpoch(visibleStartMs_, QTimeZone::UTC).toString(format));
-    timeAxisMid_->setText(QDateTime::fromMSecsSinceEpoch(midMs, QTimeZone::UTC).toString(format));
-    timeAxisEnd_->setText(QDateTime::fromMSecsSinceEpoch(visibleEndMs_, QTimeZone::UTC).toString(format));
 }
 
 void ChartWindow::applyChartVisualSettings()
@@ -1246,49 +1280,50 @@ void ChartWindow::applyChartVisualSettings()
 
 void ChartWindow::handleChartWheel(QWheelEvent* event)
 {
-    if (!chartView_ || candles_.isEmpty()) {
+    if (!chartView_ || !chart_ || candles_.isEmpty()) {
         event->accept();
         return;
     }
 
-    const int delta = event->angleDelta().y();
-    if (delta == 0) {
+    const QPoint pixelDelta = event->pixelDelta();
+    const QPoint angleDelta = event->angleDelta();
+    const int horizontalInput = pixelDelta.x() != 0 ? pixelDelta.x() : angleDelta.x();
+    const int verticalInput = pixelDelta.y() != 0 ? pixelDelta.y() : angleDelta.y();
+    const QRectF plot = chart_->plotArea();
+
+    if (horizontalInput != 0 && std::abs(horizontalInput) >= std::abs(verticalInput)) {
+        const qint64 range = std::max<qint64>(visibleEndMs_ - visibleStartMs_, minVisibleRangeMs());
+        const double units = pixelDelta.x() != 0 ? static_cast<double>(horizontalInput) : static_cast<double>(horizontalInput) / 120.0 * 60.0;
+        const qint64 shiftMs = plot.width() > 0 ? static_cast<qint64>(units * range / plot.width()) : static_cast<qint64>(units * barDurationMs());
+        userTimeRange_ = true;
+        followRightEdge_ = false;
+        panTimeRange(shiftMs);
+        if (!userPriceRange_) {
+            autoscalePriceForVisibleRange();
+        }
+        event->accept();
+        return;
+    }
+
+    if (verticalInput == 0) {
         event->accept();
         return;
     }
 
     if (isOverPriceScale(event->position())) {
-        const double center = (visiblePriceMin_ + visiblePriceMax_) * 0.5;
-        const double currentRange = std::max(visiblePriceMax_ - visiblePriceMin_, 0.01);
-        const double factor = delta > 0 ? 0.86 : 1.16;
-        const double nextRange = std::max(currentRange * factor, 0.01);
+        const double cursorRatio = plot.height() > 0 ? std::clamp((event->position().y() - plot.top()) / plot.height(), 0.0, 1.0) : 0.5;
+        const double factor = verticalInput > 0 ? 0.86 : 1.16;
         userPriceRange_ = true;
-        setPriceRange(center - nextRange * 0.5, center + nextRange * 0.5);
+        zoomPriceRangeAt(cursorRatio, factor);
         event->accept();
         return;
     }
 
-    const qint64 currentRange = std::max<qint64>(visibleEndMs_ - visibleStartMs_, minVisibleRangeMs());
-    const double factor = delta > 0 ? 0.78 : 1.28;
-    const qint64 nextRange = std::clamp<qint64>(static_cast<qint64>(currentRange * factor), minVisibleRangeMs(), maxVisibleRangeMs());
-    const QRectF plot = chart_->plotArea();
     const double cursorRatio = plot.width() > 0 ? std::clamp((event->position().x() - plot.left()) / plot.width(), 0.0, 1.0) : 0.5;
-    const qint64 anchor = visibleStartMs_ + static_cast<qint64>(currentRange * cursorRatio);
-    qint64 start = anchor - static_cast<qint64>(nextRange * cursorRatio);
-    qint64 end = start + nextRange;
-
-    const qint64 firstMs = candles_.first().time.toMSecsSinceEpoch();
-    const qint64 lastMs = rightEdgeForLastCandle(candles_.last().time.toMSecsSinceEpoch());
-    if (start < firstMs) {
-        end += firstMs - start;
-        start = firstMs;
-    }
-    if (end > lastMs) {
-        start -= end - lastMs;
-        end = lastMs;
-    }
+    const double factor = verticalInput > 0 ? 0.78 : 1.28;
     userTimeRange_ = true;
-    setTimeRange(start, end);
+    followRightEdge_ = false;
+    zoomTimeRangeAt(cursorRatio, factor);
     if (!userPriceRange_) {
         autoscalePriceForVisibleRange();
     }
@@ -1338,6 +1373,7 @@ void ChartWindow::handleChartMouseMove(QMouseEvent* event)
     const double priceShift = plot.height() > 0 ? delta.y() * priceRange / plot.height() : 0.0;
     userTimeRange_ = true;
     userPriceRange_ = true;
+    followRightEdge_ = false;
     setTimeRange(dragStartMinMs_ + shiftMs, dragStartMaxMs_ + shiftMs);
     setPriceRange(dragStartPriceMin_ + priceShift, dragStartPriceMax_ + priceShift);
     event->accept();
@@ -1354,6 +1390,7 @@ void ChartWindow::handleChartDoubleClick(QMouseEvent* event)
 {
     userTimeRange_ = false;
     userPriceRange_ = false;
+    followRightEdge_ = true;
     updateVisibleRanges(false);
     event->accept();
 }
@@ -1475,15 +1512,13 @@ void ChartWindow::applyLocalStyle()
             background: #07090d;
             border: 0;
         }
-        QFrame#timeAxisStrip {
-            background: #07090d;
-            border: 0;
-            border-top: 1px solid #1b222d;
-        }
-        QLabel#timeAxisLabel {
-            color: #9aa4b3;
+        QLabel#currentPriceLabel {
+            background: #00ff3b;
+            border: 1px solid #00ff3b;
+            border-radius: 3px;
+            color: #041008;
             font-size: 11px;
-            font-weight: 800;
+            font-weight: 900;
         }
         QLabel#chartTitle {
             color: #f0f2f4;

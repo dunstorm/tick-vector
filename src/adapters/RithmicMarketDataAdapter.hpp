@@ -53,6 +53,7 @@ private:
     void restoreCachedCandles();
     void rememberCandleCache();
     void persistCandleCache(bool force);
+    void trimCandlesToActiveWindow();
     int activeLookbackDays() const;
     int activeBarMinutes() const;
     void mergeCandle(const Candle& candle);
@@ -77,6 +78,7 @@ private:
     ChartDataRequest pendingChartDataRequest_;
     bool chartDataRequested_{false};
     bool candleCacheDirty_{false};
+    bool chartBackfillComplete_{false};
     bool resolvingFrontMonth_{false};
     bool connectionStarted_{false};
 };

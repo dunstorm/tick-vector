@@ -13,7 +13,7 @@ namespace tc {
 namespace {
 
 constexpr quint32 kTickerUpdateBits = 1 | 2 | 4;
-constexpr int kBackfillMinutes = 2;
+constexpr int kBackfillMinutes = 1;
 constexpr int kDefaultBackfillDays = 10;
 constexpr int kMaxBackfillDays = 10;
 constexpr int kBackfillBars = kMaxBackfillDays * 24 * 60 / kBackfillMinutes;
@@ -22,6 +22,7 @@ constexpr int kCacheFreshSeconds = 6 * 60 * 60;
 constexpr int kCachePersistThrottleSeconds = 30;
 constexpr int kMaxProfileBins = 220;
 constexpr int kBackfillEmitEveryBars = 25;
+constexpr int kGapBackfillOverlapBars = 5;
 
 QStringList splitQualifiedSymbol(const QString& symbol)
 {
@@ -93,6 +94,37 @@ QString cacheKey(const QString& exchange, const QString& symbol, int barMinutes,
     return exchange.trimmed().toUpper() + ":" + symbol.trimmed().toUpper()
         + ":" + QString::number(std::max(barMinutes, 1)) + "m"
         + ":" + QString::number(std::max(lookbackDays, 1)) + "d";
+}
+
+qint64 barSecondsForMinutes(int barMinutes)
+{
+    return std::max<qint64>(barMinutes, 1) * 60;
+}
+
+bool candlesCoverCurrentTime(const QVector<Candle>& candles, int barMinutes)
+{
+    if (candles.isEmpty() || !candles.last().time.isValid()) {
+        return false;
+    }
+
+    const qint64 barSeconds = barSecondsForMinutes(barMinutes);
+    const QDateTime lastCoveredTime = candles.last().time.toUTC().addSecs(barSeconds);
+    const qint64 uncoveredSeconds = lastCoveredTime.secsTo(QDateTime::currentDateTimeUtc());
+    const qint64 toleranceSeconds = std::max<qint64>(barSeconds, 60);
+    return uncoveredSeconds <= toleranceSeconds;
+}
+
+int backfillBarsForCurrentGap(const QVector<Candle>& candles, int barMinutes, int maxBars)
+{
+    if (candles.isEmpty() || !candles.last().time.isValid()) {
+        return maxBars;
+    }
+
+    const qint64 barSeconds = barSecondsForMinutes(barMinutes);
+    const QDateTime lastCoveredTime = candles.last().time.toUTC().addSecs(barSeconds);
+    const qint64 missingSeconds = std::max<qint64>(lastCoveredTime.secsTo(QDateTime::currentDateTimeUtc()), 0);
+    const int missingBars = static_cast<int>((missingSeconds + barSeconds - 1) / barSeconds);
+    return std::clamp(missingBars + kGapBackfillOverlapBars, 1, maxBars);
 }
 
 bool sameInstrument(const QString& leftExchange, const QString& leftSymbol, const QString& rightExchange, const QString& rightSymbol)
@@ -258,6 +290,7 @@ void RithmicMarketDataAdapter::subscribe(const QString& symbol)
     backfillTicksLoaded_ = 0;
     lastCachePersistedAt_ = {};
     candleCacheDirty_ = false;
+    chartBackfillComplete_ = false;
     chartDataRequested_ = false;
     resolvePendingSymbol();
     emitSnapshot();
@@ -305,6 +338,7 @@ bool RithmicMarketDataAdapter::requestChartData(const ChartDataRequest& request)
         snapshot_.chartDaysLoaded = 0;
         snapshot_.chartDaysExpected = normalized.lookbackDays;
         candleCacheDirty_ = false;
+        chartBackfillComplete_ = false;
         lastCachePersistedAt_ = {};
         backfillLoadedDates_.clear();
         backfillTicksLoaded_ = 0;
@@ -517,8 +551,10 @@ void RithmicMarketDataAdapter::handleHistoryFinished(bool ok, const QString& mes
     snapshot_.chartDaysLoaded = std::min(std::max(snapshot_.chartDaysLoaded, static_cast<int>(backfillLoadedDates_.size())), expectedDays);
     snapshot_.chartDaysExpected = expectedDays;
     if (!ok) {
+        chartBackfillComplete_ = false;
         snapshot_.connectionLabel = snapshot_.connected ? "Backfill unavailable: " + message : message;
     } else {
+        chartBackfillComplete_ = true;
         persistCandleCache(true);
         snapshot_.connectionLabel = snapshot_.connected ? "Live Rithmic feed" : message;
     }
@@ -624,17 +660,23 @@ bool RithmicMarketDataAdapter::startChartBackfill(bool allowCached)
 
     const QString key = cacheKey(pendingExchange_, pendingSymbol_, barMinutes, lookbackDays);
     const QDateTime refreshedAt = candleCacheRefreshedAt_.value(key);
-    if (allowCached && !candleCache_.value(key).isEmpty() && refreshedAt.isValid() && refreshedAt.secsTo(QDateTime::currentDateTimeUtc()) < kCacheFreshSeconds) {
+    const QVector<Candle> cachedCandles = candleCache_.value(key);
+    const bool cacheWasSavedRecently = refreshedAt.isValid() && refreshedAt.secsTo(QDateTime::currentDateTimeUtc()) < kCacheFreshSeconds;
+    const bool cacheCoversNow = candlesCoverCurrentTime(cachedCandles, barMinutes);
+    if (allowCached && !cachedCandles.isEmpty() && cacheWasSavedRecently && cacheCoversNow) {
         snapshot_.buildingChartData = false;
         snapshot_.chartDataLabel.clear();
         snapshot_.connectionLabel = "Using cached chart data for " + pendingExchange_ + ":" + pendingSymbol_ + ".";
+        chartBackfillComplete_ = true;
         emitSnapshot();
         return true;
     }
 
+    const int requestedBars = allowCached ? backfillBarsForCurrentGap(cachedCandles, barMinutes, expectedBars) : expectedBars;
+    chartBackfillComplete_ = false;
     snapshot_.buildingChartData = true;
     snapshot_.chartBarsLoaded = 0;
-    snapshot_.chartBarsExpected = expectedBars;
+    snapshot_.chartBarsExpected = requestedBars;
     snapshot_.chartTicksLoaded = 0;
     snapshot_.chartDaysLoaded = 0;
     snapshot_.chartDaysExpected = lookbackDays;
@@ -642,7 +684,7 @@ bool RithmicMarketDataAdapter::startChartBackfill(bool allowCached)
     backfillLoadedDates_.clear();
     backfillTicksLoaded_ = 0;
     emitSnapshot();
-    return protocol_->requestTimeBarBackfill(pendingSymbol_, pendingExchange_, barMinutes, expectedBars);
+    return protocol_->requestTimeBarBackfill(pendingSymbol_, pendingExchange_, barMinutes, requestedBars);
 }
 
 void RithmicMarketDataAdapter::restoreCachedCandles()
@@ -668,12 +710,14 @@ void RithmicMarketDataAdapter::restoreCachedCandles()
     }
 
     snapshot_.candles = cached;
+    trimCandlesToActiveWindow();
+    candleCache_[key] = snapshot_.candles;
     snapshot_.volumeProfile.clear();
     for (const auto& candle : snapshot_.candles) {
         updateProfileFromCandle(candle);
     }
-    snapshot_.chartBarsLoaded = cached.size();
-    snapshot_.chartBarsExpected = std::max(static_cast<int>(cached.size()), lookbackDays * 24 * 60 / barMinutes);
+    snapshot_.chartBarsLoaded = snapshot_.candles.size();
+    snapshot_.chartBarsExpected = std::max(static_cast<int>(snapshot_.candles.size()), lookbackDays * 24 * 60 / barMinutes);
     snapshot_.chartDaysExpected = lookbackDays;
     QSet<QDate> cachedDates;
     for (const auto& candle : snapshot_.candles) {
@@ -709,7 +753,8 @@ void RithmicMarketDataAdapter::rememberCandleCache()
 
 void RithmicMarketDataAdapter::persistCandleCache(bool force)
 {
-    if (!chartDataRequested_ || !candleCacheDirty_ || pendingSymbol_.isEmpty() || pendingExchange_.isEmpty() || snapshot_.candles.isEmpty()) {
+    if (!chartDataRequested_ || !chartBackfillComplete_ || snapshot_.buildingChartData || !candleCacheDirty_
+        || pendingSymbol_.isEmpty() || pendingExchange_.isEmpty() || snapshot_.candles.isEmpty()) {
         return;
     }
 
@@ -721,6 +766,24 @@ void RithmicMarketDataAdapter::persistCandleCache(bool force)
     if (chartDataCache_.save(pendingExchange_, pendingSymbol_, activeBarMinutes(), activeLookbackDays(), snapshot_.candles, now)) {
         lastCachePersistedAt_ = now;
         candleCacheDirty_ = false;
+    }
+}
+
+void RithmicMarketDataAdapter::trimCandlesToActiveWindow()
+{
+    if (snapshot_.candles.isEmpty()) {
+        return;
+    }
+
+    const QDateTime cutoff = QDateTime::currentDateTimeUtc()
+        .addDays(-activeLookbackDays())
+        .addSecs(-barSecondsForMinutes(activeBarMinutes()));
+    while (!snapshot_.candles.isEmpty() && snapshot_.candles.first().time < cutoff) {
+        snapshot_.candles.removeFirst();
+    }
+
+    while (snapshot_.candles.size() > kMaxCandles) {
+        snapshot_.candles.removeFirst();
     }
 }
 
@@ -751,9 +814,7 @@ void RithmicMarketDataAdapter::mergeCandle(const Candle& candle)
         snapshot_.candles.insert(it, normalized);
     }
 
-    while (snapshot_.candles.size() > kMaxCandles) {
-        snapshot_.candles.removeFirst();
-    }
+    trimCandlesToActiveWindow();
 
     rememberCandleCache();
 }
@@ -761,6 +822,9 @@ void RithmicMarketDataAdapter::mergeCandle(const Candle& candle)
 void RithmicMarketDataAdapter::upsertCandle(const RithmicTradeTick& trade)
 {
     if (!isFinitePositive(trade.price) || trade.size <= 0) {
+        return;
+    }
+    if (snapshot_.buildingChartData && !snapshot_.candles.isEmpty() && !candlesCoverCurrentTime(snapshot_.candles, activeBarMinutes())) {
         return;
     }
 
@@ -805,9 +869,7 @@ void RithmicMarketDataAdapter::upsertCandle(const RithmicTradeTick& trade)
         }
     }
 
-    while (snapshot_.candles.size() > kMaxCandles) {
-        snapshot_.candles.removeFirst();
-    }
+    trimCandlesToActiveWindow();
 
     rememberCandleCache();
     persistCandleCache(false);

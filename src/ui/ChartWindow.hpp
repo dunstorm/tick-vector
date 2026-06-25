@@ -17,6 +17,7 @@ class QPushButton;
 class QWheelEvent;
 class QDateTimeAxis;
 class QCandlestickSeries;
+class QLineSeries;
 class QValueAxis;
 class QChart;
 class QChartView;
@@ -51,14 +52,18 @@ private:
     void autoscalePriceForVisibleRange();
     void setTimeRange(qint64 startMs, qint64 endMs);
     void setPriceRange(double minPrice, double maxPrice);
+    void panTimeRange(qint64 shiftMs);
+    void zoomTimeRangeAt(double cursorRatio, double factor);
+    void zoomPriceRangeAt(double cursorRatio, double factor);
+    void updateCurrentPriceLine();
+    void updateCurrentPriceLabel();
     qint64 barDurationMs() const;
+    qint64 rightOffsetMs() const;
     qint64 minVisibleRangeMs() const;
     qint64 maxVisibleRangeMs() const;
     qint64 rightEdgeForLastCandle(qint64 lastMs) const;
-    bool isFollowingRightEdge(qint64 previousLastMs) const;
     void updateAxisTitles();
     void updateHeaderTitles(const QString& symbol);
-    void updateTimeAxisLabels();
     void applyChartVisualSettings();
     void handleChartWheel(QWheelEvent* event);
     void handleChartMousePress(QMouseEvent* event);
@@ -80,6 +85,7 @@ private:
     QChart* chart_{nullptr};
     QChartView* chartView_{nullptr};
     QCandlestickSeries* candleSeries_{nullptr};
+    QLineSeries* currentPriceLine_{nullptr};
     QDateTimeAxis* axisX_{nullptr};
     QValueAxis* axisY_{nullptr};
     QFrame* chrome_{nullptr};
@@ -90,9 +96,7 @@ private:
     QLabel* feedState_{nullptr};
     QLabel* loadingSpinner_{nullptr};
     QLabel* loadingDetail_{nullptr};
-    QLabel* timeAxisStart_{nullptr};
-    QLabel* timeAxisMid_{nullptr};
-    QLabel* timeAxisEnd_{nullptr};
+    QLabel* currentPriceLabel_{nullptr};
     QProgressBar* buildProgress_{nullptr};
     QTimer loadingSpinnerTimer_;
     QPoint dragOffset_;
@@ -105,9 +109,10 @@ private:
     qint64 visibleEndMs_{0};
     double visiblePriceMin_{0.0};
     double visiblePriceMax_{1.0};
+    double currentPrice_{0.0};
     quint64 renderedCandleFingerprint_{0};
     int loadingSpinnerFrame_{0};
-    int selectedBarMinutes_{2};
+    int selectedBarMinutes_{1};
     QString chartPaletteId_;
     bool hasPendingSnapshot_{false};
     bool dragging_{false};
@@ -115,7 +120,7 @@ private:
     bool draggingPriceScale_{false};
     bool userTimeRange_{false};
     bool userPriceRange_{false};
-    bool wasPinnedRight_{true};
+    bool followRightEdge_{true};
 };
 
 } // namespace tc

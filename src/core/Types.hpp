@@ -117,7 +117,7 @@ struct ChartDataRequest {
     QString symbol;
     QString exchange;
     int lookbackDays{10};
-    int barMinutes{2};
+    int barMinutes{1};
     bool allowCached{true};
 };
 

@@ -93,7 +93,7 @@ private:
     struct PendingHistoryRequest {
         QString symbol;
         QString exchange;
-        int barMinutes{2};
+        int barMinutes{1};
         int maxBars{240};
     };
 
